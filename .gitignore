@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+
+# Environment variables
+.env
+
+# Generated assets
+assets/
+
+# Mac
+.DS_Store

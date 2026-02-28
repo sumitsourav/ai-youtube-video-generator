@@ -1,0 +1,4 @@
+moviepy
+requests
+TTS
+python-dotenv
