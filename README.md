@@ -1,8 +1,8 @@
 # 🎬 AI YouTube Video Generator
 
 An AI-powered tool that generates videos from a topic using:
-- LLM (Ollama / phi3)
-- Text-to-Speech (gTTS)
+- LLM (Ollama3 / phi3)
+- Text-to-Speech (gTTS)/ElevenLabs/pyttsx3
 - Pexels API for images
 - MoviePy for video generation
 
@@ -10,13 +10,13 @@ An AI-powered tool that generates videos from a topic using:
 - Generate script from topic
 - Convert script to voice
 - Fetch HD images
-- Create video automatically
+- Creates a video automatically
 
 ## 🛠 Tech Stack
 - Python
 - Ollama
 - MoviePy
-- gTTS
+- gTTS/ElevenLabs/pyttsx3
 - Pexels API
 
 ## ▶️ Run
