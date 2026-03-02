@@ -37,5 +37,5 @@ PEXELS_API_KEY=your_key
 
 ## Output Video
 
-# Sample output (Topic - Space Exploration)
-
+# Sample output (Topic - Dangerous power of AI)
+https://www.youtube.com/watch?v=SOeBVRSr4Bo
