@@ -33,3 +33,5 @@ pip install -r requirements.txt
 Create .env:
 
 PEXELS_API_KEY=your_key
+
+#Sample output (Topic - Space Exploration)
