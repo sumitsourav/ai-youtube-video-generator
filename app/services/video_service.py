@@ -19,7 +19,7 @@ def create_video(images, audio_file, script_text):
         clip = (
             ImageClip(img)
             .with_duration(duration_per_image)
-            .resized(height=720)
+            .resized(width=1280) # ✅ landscape
             .with_effects([
                 vfx.FadeIn(1),
                 vfx.FadeOut(1)
@@ -28,6 +28,7 @@ def create_video(images, audio_file, script_text):
         clips.append(clip)
 
     video = concatenate_videoclips(clips, method="compose")
+    video = video.resized((1280, 720))  # ✅ landscape output
 
     # subtitles
     # txt_clip = (

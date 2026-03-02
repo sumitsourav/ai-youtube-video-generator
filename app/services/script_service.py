@@ -4,15 +4,25 @@ import requests
 
 def generate_script(topic):
     prompt = f"""
-Write a YouTube documentary script about: {topic}
+Write a YouTube documentary voiceover script about: {topic}
 
-Requirements:
-- Duration: 2-3 minutes
-- Tone: emotional and cinematic
-- Use simple English
-- Add a strong hook at the beginning
-- Keep sentences short and engaging
-- End with a powerful conclusion
+Rules:
+- Only narration text
+- No scene descriptions
+- No labels like Narrator
+- No brackets []
+- No "cut to", "scene", "shot"
+- Write in paragraph format
+
+Style:
+- Emotional, cinematic
+- Simple English
+- Short sentences
+- Strong hook at start
+- Engaging flow
+- Powerful ending
+
+Length: 2-3 minutes
 """
 
     response = requests.post(

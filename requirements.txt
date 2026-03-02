@@ -2,3 +2,6 @@ moviepy
 requests
 TTS
 python-dotenv
+pyttsx3>=2.90
+elevenlabs>=0.2.0
+gTTS>=2.3.0
