@@ -23,6 +23,7 @@ An AI-powered tool that generates videos from a topic using:
 
 ```bash
 python -m app.main
+```
 
 📦 Setup
 
@@ -34,4 +35,7 @@ Create .env:
 
 PEXELS_API_KEY=your_key
 
-#Sample output (Topic - Space Exploration)
+## Output Video
+
+# Sample output (Topic - Space Exploration)
+
