@@ -1,6 +1,9 @@
 # app/services/script_service.py
 
-import requests
+import google.generativeai as genai
+from app.config import GOOGLE_API_KEY
+
+genai.configure(api_key=GOOGLE_API_KEY)
 
 def generate_script(topic):
     prompt = f"""
@@ -25,13 +28,7 @@ Style:
 Length: 2-3 minutes
 """
 
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "phi3",
-            "prompt": prompt,
-            "stream": False
-        }
-    )
-
-    return response.json()["response"]
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    response = model.generate_content(prompt)
+    
+    return response.text

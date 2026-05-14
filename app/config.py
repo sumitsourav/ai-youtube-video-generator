@@ -5,13 +5,14 @@ load_dotenv()
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 OUTPUT_DIR = "assets"
 IMAGE_DIR = f"{OUTPUT_DIR}/images"
 AUDIO_DIR = f"{OUTPUT_DIR}/audio"
 VIDEO_DIR = f"{OUTPUT_DIR}/videos"
 
-VIDEO_NAME = f"{VIDEO_DIR}/output.mp4"
+VIDEO_NAME = f"{VIDEO_DIR}/output1.mp4"
 AUDIO_NAME = f"{AUDIO_DIR}/voice.wav"
 
 # TTS Configuration

@@ -7,6 +7,7 @@ from moviepy import (
     vfx
 )
 from app.config import VIDEO_NAME
+from fastapi import BackgroundTasks
 
 
 def create_video(video_files, audio_file, script_text):
@@ -33,7 +34,7 @@ def create_video(video_files, audio_file, script_text):
         # ✅ Apply resize & effects AFTER trimming
         clip = (
             clip
-            .resized((1280, 720)) # ✅ landscape
+            .resized((720, 1280)) # ✅ landscape
             .with_effects([
                 vfx.FadeIn(1),
                 vfx.FadeOut(1)

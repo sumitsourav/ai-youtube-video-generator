@@ -5,7 +5,7 @@ import os
 from app.config import IMAGE_DIR, PEXELS_API_KEY
 from app.utils.file_utils import temp_filename
 
-def fetch_videos(query, limit=5):
+def fetch_videos(query, limit=10):
     url = "https://api.pexels.com/videos/search"
 
     headers = {
