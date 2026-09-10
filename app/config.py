@@ -47,6 +47,8 @@ TTS_ENGINE = os.getenv("TTS_ENGINE", "pyttsx3")
 POLLY_REGION = os.getenv("POLLY_REGION", "ap-south-1")
 POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Matthew")
 POLLY_ENGINE = os.getenv("POLLY_ENGINE", "neural")
+# Slows the voice to documentary pace; see _to_ssml in tts_service.py.
+POLLY_RATE = os.getenv("POLLY_RATE", "70%")
 TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "")  # For ElevenLabs: use voice ID
 TTS_VOICE_NAME = os.getenv("TTS_VOICE_NAME", "default")  # For pyttsx3: voice name
 TTS_RATE = int(os.getenv("TTS_RATE", "150"))  # Speech rate (75-300, default 150)

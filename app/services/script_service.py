@@ -163,13 +163,30 @@ def _complete(prompt: str, max_tokens: int) -> str:
 _WORDS_PER_MINUTE_BY_ENGINE = {
     "gtts": 120,
     "pyttsx3": 120,
-    # Polly neural reads faster than gTTS. Starting estimate - confirm against
-    # a real render and correct before trusting the length targeting.
-    "polly": 150,
+    # Calibrated end-to-end on real generated scripts, not on clean prose.
+    # Polly reads continuous paragraphs at 148 wpm here, but real scripts are
+    # full of short sentences and paragraph breaks that it pauses on, and the
+    # model tends to run a few percent over the word target - together those
+    # drag the delivered pace down to ~122. Calibrating on the flowing-prose
+    # number instead produced a 2:35 video for a 2:00 request. Only valid
+    # while POLLY_RATE stays at 70%.
+    "polly": 122,
     "elevenlabs": 140,
 }
 
 WORDS_PER_MINUTE = _WORDS_PER_MINUTE_BY_ENGINE.get(TTS_ENGINE, 120)
+
+def _compensated_word_target(length_minutes):
+    """Ask for fewer words than the arithmetic suggests, because the model
+    reliably overruns the number it's given - and overruns it further the
+    larger the number gets. Measured against real generations: +6% at 2
+    minutes, +11% at 3, +15% at 5. Asking for the raw target therefore drifts
+    a 5-minute video nearly a minute long, so the known overshoot is divided
+    back out here. The correction has to taper to nothing at the short end -
+    a flat per-minute rate over-corrected a 2-minute script into 1:47."""
+    expected_overshoot = 0.03 * (length_minutes - 1)
+    return round(length_minutes * WORDS_PER_MINUTE / (1 + expected_overshoot))
+
 
 _SCRIPT_MARKER = "===SCRIPT==="
 _KEYWORDS_MARKER = "===KEYWORDS==="
@@ -188,7 +205,7 @@ def generate_script_and_keywords(topic, length_minutes=2, max_keywords=4):
     nothing usable from stock libraries - the model translates it into
     concrete, filmable subjects.
     """
-    target_words = length_minutes * WORDS_PER_MINUTE
+    target_words = _compensated_word_target(length_minutes)
     prompt = f"""
 Write a YouTube documentary voiceover script about: {topic}
 

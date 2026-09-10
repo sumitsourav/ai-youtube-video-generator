@@ -9,6 +9,7 @@ from app.config import (
     AUDIO_NAME,
     ELEVENLABS_API_KEY,
     POLLY_ENGINE,
+    POLLY_RATE,
     POLLY_REGION,
     POLLY_VOICE_ID,
     TTS_ENGINE,
@@ -140,7 +141,8 @@ class TTSService:
         try:
             for index, chunk in enumerate(chunks):
                 response = client.synthesize_speech(
-                    Text=chunk,
+                    Text=_to_ssml(chunk),
+                    TextType="ssml",
                     OutputFormat="mp3",
                     VoiceId=POLLY_VOICE_ID,
                     Engine=POLLY_ENGINE,
@@ -188,6 +190,18 @@ class TTSService:
         else:
             print(f"Voice listing not implemented for {self.engine}")
             return []
+
+
+def _to_ssml(text):
+    """Wrap narration in SSML so it can be slowed down. Matthew reads at ~207
+    wpm unprompted, which is too brisk to sound like documentary narration -
+    70% brings it to ~148 wpm, both measured on real synthesis. The escape
+    matters: an unescaped & or < in a script would make Polly reject the whole
+    request as malformed SSML."""
+    escaped = (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    return f'<speak><prosody rate="{POLLY_RATE}">{escaped}</prosody></speak>'
 
 
 def _split_for_polly(text, limit=_POLLY_CHUNK_CHARS):
