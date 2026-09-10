@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ai-youtube-video-generator
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: TTS_ENGINE
+        value: gtts
+      - key: TTS_LANGUAGE
+        value: en
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: B2_ENDPOINT
+        sync: false

@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI YouTube Video Generator</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0c14;
+    --panel: #14151f;
+    --panel-alt: #1a1c2a;
+    --border: #262838;
+    --text: #f1f1f6;
+    --muted: #8b8da3;
+
+    --accent: #7c5cff;
+    --accent-2: #ff5ca8;
+    --accent-hover: #9376ff;
+    --accent-grad: linear-gradient(135deg, #7c5cff, #ff5ca8);
+    --accent-soft: rgba(124,92,255,0.15);
+
+    --error: #ff5c7a;
+    --success: #2fd991;
+    --warn: #ffb545;
+    --info: #4cc9f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 500px at 10% -10%, rgba(124,92,255,0.14), transparent),
+      radial-gradient(900px 400px at 100% 0%, rgba(255,92,168,0.10), transparent),
+      var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main {
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+  header {
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 23px;
+    margin: 0 0 4px;
+    background: var(--accent-grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    display: inline-block;
+  }
+  p.subtitle {
+    color: var(--muted);
+    margin: 0;
+    font-size: 14px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .card + .card { margin-top: 20px; }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 700;
+  }
+  form { display: flex; gap: 8px; }
+  input[type="text"], input[type="password"], input[type="search"] {
+    flex: 1;
+    background: #0e0f18;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 14px;
+  }
+  input[type="text"]:focus, input[type="password"]:focus, input[type="search"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+  select {
+    background: #0e0f18;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 14px;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--accent-grad);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-secondary:hover:not(:disabled) { background: var(--panel-alt); filter: none; }
+  .btn-danger {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--error);
+  }
+  .btn-danger:hover:not(:disabled) { background: rgba(255,92,122,0.12); border-color: var(--error); filter: none; }
+  .btn-ghost {
+    background: var(--accent-soft);
+    border: 1px solid transparent;
+    color: var(--accent);
+  }
+  .btn-ghost:hover:not(:disabled) { background: rgba(124,92,255,0.24); filter: none; }
+  .result-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+  /* step tracker */
+  .steps {
+    display: flex;
+    align-items: flex-start;
+    margin: 4px 0 18px;
+  }
+  .step { flex: 1; text-align: center; position: relative; }
+  .step:not(:first-child)::before {
+    content: "";
+    position: absolute;
+    top: 13px;
+    left: -50%;
+    width: 100%;
+    height: 2px;
+    background: var(--border);
+    z-index: 0;
+  }
+  .step.done:not(:first-child)::before { background: var(--success); }
+  .step-dot {
+    position: relative;
+    z-index: 1;
+    width: 26px;
+    height: 26px;
+    margin: 0 auto 6px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    color: var(--muted);
+  }
+  .step.done .step-dot { background: var(--success); border-color: var(--success); color: #062018; }
+  .step.active .step-dot { border-color: var(--accent); color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .step.failed .step-dot { background: var(--error); border-color: var(--error); color: #2a0a10; }
+  .step-label { font-size: 11px; color: var(--muted); }
+  .step.done .step-label, .step.active .step-label { color: var(--text); }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(124,92,255,0.4); } 50% { box-shadow: 0 0 0 5px rgba(124,92,255,0); } }
+
+  .render-progress {
+    margin: -6px 0 18px;
+  }
+  .render-progress-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .render-progress-fill {
+    height: 100%;
+    background: var(--accent-grad);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+  .render-progress-label {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.queued { background: rgba(139,141,163,0.16); color: var(--muted); }
+  .badge.running { background: rgba(76,201,240,0.16); color: var(--info); }
+  .badge.done { background: rgba(47,217,145,0.16); color: var(--success); }
+  .badge.failed { background: rgba(255,92,122,0.16); color: var(--error); }
+  .badge-length {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--accent-soft);
+    color: var(--accent);
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .badge-length.actual { background: rgba(47,217,145,0.16); color: var(--success); }
+
+  #current-topic-row { display: flex; align-items: center; gap: 4px; margin: 0 0 14px; flex-wrap: wrap; }
+  #current-topic { font-size: 15px; margin: 0; color: var(--text); font-weight: 600; }
+  #current-empty { color: var(--muted); font-size: 14px; }
+
+  details.script-box {
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-alt);
+  }
+  details.script-box summary {
+    cursor: pointer;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--muted);
+    user-select: none;
+  }
+  details.script-box[open] summary { border-bottom: 1px solid var(--border); }
+  .script-text {
+    padding: 12px;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    color: var(--text);
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  #video-result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  video {
+    width: 100%;
+    max-width: 340px;
+    max-height: 65vh;
+    border-radius: 10px;
+    margin-top: 14px;
+    background: #000;
+    box-shadow: 0 8px 28px rgba(124,92,255,0.18);
+  }
+  a.download {
+    display: inline-flex;
+    align-items: center;
+    color: #fff;
+    background: var(--accent-grad);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 14px;
+    text-decoration: none;
+    font-weight: 700;
+  }
+  a.download:hover { filter: brightness(1.08); }
+
+  .error-box {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(255,92,122,0.1);
+    border: 1px solid rgba(255,92,122,0.3);
+    color: var(--error);
+    font-size: 13px;
+  }
+  #error-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .warn-box {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(255,181,69,0.1);
+    border: 1px solid rgba(255,181,69,0.3);
+    color: var(--warn);
+    font-size: 13px;
+  }
+
+  /* history */
+  .history-stats {
+    font-size: 12px;
+    color: var(--muted);
+    margin: -8px 0 12px;
+  }
+  .history-stats strong { color: var(--accent); font-weight: 700; }
+  #history-search { margin-bottom: 12px; font-size: 13px; padding: 8px 10px; }
+  #history-list { display: flex; flex-direction: column; gap: 8px; max-height: 640px; overflow-y: auto; }
+  .history-empty { color: var(--muted); font-size: 13px; }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--text);
+    font: inherit;
+    width: 100%;
+  }
+  .history-item:hover { background: var(--panel-alt); }
+  .history-item.active { background: var(--accent-soft); border-color: rgba(124,92,255,0.35); }
+
+  .history-thumb {
+    flex-shrink: 0;
+    width: 48px;
+    height: 84px;
+    border-radius: 6px;
+    background: #000;
+    object-fit: cover;
+  }
+  .history-thumb-placeholder {
+    flex-shrink: 0;
+    width: 48px;
+    height: 84px;
+    border-radius: 6px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+  .history-thumb-placeholder.spin { animation: spin-icon 1.5s linear infinite; color: var(--info); }
+  @keyframes spin-icon { to { transform: rotate(360deg); } }
+
+  .history-info { min-width: 0; flex: 1; }
+  .history-delete {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .history-item:hover .history-delete { opacity: 1; }
+  .history-delete:hover { background: rgba(255,92,122,0.15); color: var(--error); filter: none; }
+  .history-item .h-topic {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+  }
+  .history-item .h-length { font-size: 11px; color: var(--accent); margin-bottom: 4px; }
+  .history-item .h-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .history-item .h-time { font-size: 11px; color: var(--muted); }
+
+  [hidden] { display: none !important; }
+
+  /* auth */
+  #auth-view {
+    max-width: 360px;
+    margin: 96px auto 0;
+    padding: 0 16px;
+  }
+  #auth-view form { flex-direction: column; }
+  #auth-view h1 { text-align: center; width: 100%; }
+  #auth-view p.subtitle { text-align: center; margin-bottom: 24px; }
+  .auth-switch { text-align: center; margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .auth-switch a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .auth-switch a:hover { text-decoration: underline; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .topbar-user { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="auth-view" hidden>
+  <h1>AI YouTube Video Generator</h1>
+  <p class="subtitle">Sign in to generate and manage your videos.</p>
+  <div class="card">
+    <form id="auth-form">
+      <input type="text" id="auth-username" placeholder="Username" maxlength="50" required autocomplete="username" />
+      <input type="password" id="auth-password" placeholder="Password" minlength="8" required autocomplete="current-password" />
+      <button type="submit" id="auth-submit">Log in</button>
+    </form>
+    <div id="auth-error" class="error-box" hidden></div>
+    <p class="auth-switch">
+      <span id="auth-switch-text">Don't have an account?</span>
+      <a id="auth-switch-link">Sign up</a>
+    </p>
+  </div>
+</div>
+
+<main id="app-view" hidden>
+  <header>
+    <div class="topbar">
+      <div>
+        <h1>AI YouTube Video Generator</h1>
+        <p class="subtitle">Enter a topic and it'll write a script, generate voiceover audio, pull matching stock footage, and render a short video.</p>
+      </div>
+      <div class="topbar-user">
+        <span id="topbar-username"></span>
+        <button type="button" class="btn-secondary" id="logout-btn">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <h2>New Generation</h2>
+        <form id="generate-form">
+          <input type="text" id="topic" placeholder="e.g. the history of the printing press" maxlength="200" required />
+          <select id="length-minutes">
+            <option value="1">~1 min</option>
+            <option value="2" selected>~2 min</option>
+            <option value="3">~3 min</option>
+            <option value="5">~5 min</option>
+          </select>
+          <button type="submit" id="submit-btn">Generate</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Current Job</h2>
+        <div id="current-empty">Nothing selected yet — start a generation, or pick one from history.</div>
+        <div id="current-job" hidden>
+          <div id="current-topic-row">
+            <p id="current-topic"></p>
+            <span class="badge-length" id="current-length" hidden></span>
+            <span class="badge-length actual" id="current-actual-length" hidden></span>
+          </div>
+          <div class="steps" id="steps"></div>
+          <div class="render-progress" id="render-progress" hidden>
+            <div class="render-progress-track">
+              <div class="render-progress-fill" id="render-progress-fill"></div>
+            </div>
+            <div class="render-progress-label" id="render-progress-label"></div>
+          </div>
+          <details class="script-box" id="script-box" hidden>
+            <summary>Script</summary>
+            <pre class="script-text" id="script-text"></pre>
+          </details>
+          <div id="video-result" hidden>
+            <video controls id="video-el"></video>
+            <div class="result-actions">
+              <a class="download" id="download-link" download>Download video</a>
+              <button type="button" class="btn-ghost" id="copy-link-btn" hidden>Copy link</button>
+              <button type="button" class="btn-secondary" id="regenerate-btn">Regenerate</button>
+              <button type="button" class="btn-danger" id="delete-btn">Delete</button>
+            </div>
+          </div>
+          <div id="error-box" class="error-box" hidden>
+            <div id="error-text"></div>
+            <div class="result-actions">
+              <button type="button" class="btn-secondary" id="regenerate-btn-failed">Try again</button>
+              <button type="button" class="btn-danger" id="delete-btn-failed">Delete</button>
+            </div>
+          </div>
+          <div id="stuck-box" class="warn-box" hidden>
+            <div>This is taking much longer than expected and may have gotten stuck (e.g. from a server restart mid-render). You can delete it and try again.</div>
+            <div class="result-actions">
+              <button type="button" class="btn-danger" id="delete-btn-stuck">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>History</h2>
+      <div class="history-stats" id="history-stats"></div>
+      <input type="search" id="history-search" placeholder="Search your videos..." />
+      <div id="history-list"><div class="history-empty">No jobs yet.</div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const authView = document.getElementById("auth-view");
+  const appView = document.getElementById("app-view");
+  const authForm = document.getElementById("auth-form");
+  const authUsername = document.getElementById("auth-username");
+  const authPassword = document.getElementById("auth-password");
+  const authSubmit = document.getElementById("auth-submit");
+  const authError = document.getElementById("auth-error");
+  const authSwitchText = document.getElementById("auth-switch-text");
+  const authSwitchLink = document.getElementById("auth-switch-link");
+  const topbarUsername = document.getElementById("topbar-username");
+  const logoutBtn = document.getElementById("logout-btn");
+
+  let authMode = "login";
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    authError.hidden = true;
+    authPassword.value = "";
+    if (mode === "login") {
+      authSubmit.textContent = "Log in";
+      authSwitchText.textContent = "Don't have an account?";
+      authSwitchLink.textContent = "Sign up";
+      authPassword.setAttribute("autocomplete", "current-password");
+    } else {
+      authSubmit.textContent = "Sign up";
+      authSwitchText.textContent = "Already have an account?";
+      authSwitchLink.textContent = "Log in";
+      authPassword.setAttribute("autocomplete", "new-password");
+    }
+  }
+
+  authSwitchLink.addEventListener("click", () => setAuthMode(authMode === "login" ? "signup" : "login"));
+
+  authForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    authError.hidden = true;
+    authSubmit.disabled = true;
+    try {
+      const res = await fetch(`/auth/${authMode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: authUsername.value, password: authPassword.value }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `request failed (${res.status})`);
+      }
+      const data = await res.json();
+      showApp(data.username);
+    } catch (err) {
+      authError.hidden = false;
+      authError.textContent = err.message;
+    } finally {
+      authSubmit.disabled = false;
+    }
+  });
+
+  logoutBtn.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    showAuth();
+  });
+
+  function showAuth() {
+    stopPolling();
+    activeJobId = null;
+    lastHistorySignature = "";
+    authView.hidden = false;
+    appView.hidden = true;
+    authUsername.value = "";
+    authPassword.value = "";
+  }
+
+  function showApp(username) {
+    authView.hidden = true;
+    appView.hidden = false;
+    topbarUsername.textContent = username;
+    loadHistory();
+  }
+
+  async function checkAuth() {
+    try {
+      const res = await fetch("/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        showApp(data.username);
+      } else {
+        showAuth();
+      }
+    } catch (err) {
+      showAuth();
+    }
+  }
+
+  const form = document.getElementById("generate-form");
+  const topicInput = document.getElementById("topic");
+  const lengthSelect = document.getElementById("length-minutes");
+  const submitBtn = document.getElementById("submit-btn");
+
+  const currentEmpty = document.getElementById("current-empty");
+  const currentJobEl = document.getElementById("current-job");
+  const currentTopicEl = document.getElementById("current-topic");
+  const currentLengthEl = document.getElementById("current-length");
+  const currentActualLengthEl = document.getElementById("current-actual-length");
+  const stepsEl = document.getElementById("steps");
+  const renderProgressEl = document.getElementById("render-progress");
+  const renderProgressFill = document.getElementById("render-progress-fill");
+  const renderProgressLabel = document.getElementById("render-progress-label");
+  const scriptBox = document.getElementById("script-box");
+  const scriptText = document.getElementById("script-text");
+  const videoResult = document.getElementById("video-result");
+  const videoEl = document.getElementById("video-el");
+  const downloadLink = document.getElementById("download-link");
+  const copyLinkBtn = document.getElementById("copy-link-btn");
+  const regenerateBtn = document.getElementById("regenerate-btn");
+  const regenerateBtnFailed = document.getElementById("regenerate-btn-failed");
+  const deleteBtn = document.getElementById("delete-btn");
+  const errorBox = document.getElementById("error-box");
+  const errorText = document.getElementById("error-text");
+  const deleteBtnFailed = document.getElementById("delete-btn-failed");
+  const stuckBox = document.getElementById("stuck-box");
+  const deleteBtnStuck = document.getElementById("delete-btn-stuck");
+  const historyList = document.getElementById("history-list");
+  const historyStats = document.getElementById("history-stats");
+  const historySearchInput = document.getElementById("history-search");
+
+  const STEP_DEFS = [
+    { keys: ["queued"], label: "Queued" },
+    { keys: ["generating_script"], label: "Script" },
+    { keys: ["generating_audio"], label: "Voiceover" },
+    { keys: ["fetching_videos"], label: "Footage" },
+    { keys: ["rendering_video", "uploading"], label: "Render" },
+  ];
+
+  let activeJobId = null;
+  let currentJobData = null;
+  let pollTimer = null;
+
+  function stepIndexFor(key) {
+    const idx = STEP_DEFS.findIndex((s) => s.keys.includes(key));
+    return idx === -1 ? 0 : idx;
+  }
+
+  function badgeClass(status) {
+    if (status === "done") return "done";
+    if (status === "failed") return "failed";
+    if (status === "queued") return "queued";
+    return "running";
+  }
+
+  const STUCK_AFTER_MINUTES = 30;
+
+  function isStuck(job) {
+    if (job.status === "done" || job.status === "failed") return false;
+    const ageMins = (Date.now() - new Date(job.created_at).getTime()) / 60000;
+    return ageMins > STUCK_AFTER_MINUTES;
+  }
+
+  function canDeleteJob(job) {
+    return job.status === "done" || job.status === "failed" || isStuck(job);
+  }
+
+  function formatDuration(totalSeconds) {
+    const s = Math.round(totalSeconds);
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins}:${String(secs).padStart(2, "0")}`;
+  }
+
+  function timeAgo(isoString) {
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  function renderSteps(job) {
+    const isDone = job.status === "done";
+    const isFailed = job.status === "failed";
+    const effectiveKey = isFailed ? (job.last_step || "queued") : job.status;
+    const currentIdx = isDone ? STEP_DEFS.length : stepIndexFor(effectiveKey);
+
+    stepsEl.innerHTML = STEP_DEFS.map((step, idx) => {
+      let state;
+      if (isDone || idx < currentIdx) state = "done";
+      else if (idx === currentIdx && isFailed) state = "failed";
+      else if (idx === currentIdx) state = "active";
+      else state = "pending";
+      const dot = state === "done" ? "✓" : state === "failed" ? "×" : idx + 1;
+      return `<div class="step ${state}"><div class="step-dot">${dot}</div><div class="step-label">${step.label}</div></div>`;
+    }).join("");
+  }
+
+  function renderCurrentJob(job) {
+    currentJobData = job;
+    currentEmpty.hidden = true;
+    currentJobEl.hidden = false;
+
+    currentTopicEl.textContent = job.topic;
+    if (job.length_minutes) {
+      currentLengthEl.hidden = false;
+      currentLengthEl.textContent = `requested ~${job.length_minutes} min`;
+    } else {
+      currentLengthEl.hidden = true;
+    }
+    if (job.status === "done" && job.actual_duration_seconds) {
+      currentActualLengthEl.hidden = false;
+      currentActualLengthEl.textContent = `actual ${formatDuration(job.actual_duration_seconds)}`;
+    } else {
+      currentActualLengthEl.hidden = true;
+    }
+    renderSteps(job);
+
+    if (job.status === "rendering_video" && job.render_progress !== null && job.render_progress !== undefined) {
+      renderProgressEl.hidden = false;
+      renderProgressFill.style.width = `${job.render_progress}%`;
+      renderProgressLabel.textContent = `Rendering: ${job.render_progress}%`;
+    } else {
+      renderProgressEl.hidden = true;
+    }
+
+    if (job.script) {
+      scriptBox.hidden = false;
+      scriptText.textContent = job.script;
+    } else {
+      scriptBox.hidden = true;
+    }
+
+    if (job.status === "done") {
+      videoResult.hidden = false;
+      videoEl.src = `/download/${job.job_id}`;
+      downloadLink.href = `/download/${job.job_id}`;
+      copyLinkBtn.hidden = !job.video_key;
+    } else {
+      videoResult.hidden = true;
+      videoEl.removeAttribute("src");
+    }
+
+    if (job.status === "failed") {
+      errorBox.hidden = false;
+      errorText.textContent = job.error || "Generation failed with an unknown error.";
+    } else {
+      errorBox.hidden = true;
+    }
+
+    stuckBox.hidden = !isStuck(job);
+  }
+
+  function markHistoryActive() {
+    document.querySelectorAll(".history-item").forEach((el) => {
+      el.classList.toggle("active", el.dataset.jobId === activeJobId);
+    });
+  }
+
+  function regenerateFrom(job) {
+    if (!job) return;
+    topicInput.value = job.topic;
+    lengthSelect.value = String(job.length_minutes || 2);
+    topicInput.focus();
+    topicInput.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  regenerateBtn.addEventListener("click", () => regenerateFrom(currentJobData));
+  regenerateBtnFailed.addEventListener("click", () => regenerateFrom(currentJobData));
+
+  async function copyShareLink(jobId) {
+    const original = copyLinkBtn.textContent;
+    try {
+      const res = await fetch(`/jobs/${jobId}/link`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(body.detail || `Could not get a shareable link (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      await navigator.clipboard.writeText(data.url);
+      copyLinkBtn.textContent = "Copied!";
+      setTimeout(() => { copyLinkBtn.textContent = original; }, 1500);
+    } catch (err) {
+      alert(`Failed to copy link: ${err.message}`);
+    }
+  }
+
+  copyLinkBtn.addEventListener("click", () => { if (activeJobId) copyShareLink(activeJobId); });
+
+  async function deleteJob(jobId) {
+    if (!confirm("Delete this video? This can't be undone.")) return;
+    try {
+      const res = await fetch(`/jobs/${jobId}`, { method: "DELETE" });
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(body.detail || `Failed to delete (${res.status})`);
+        return;
+      }
+      if (jobId === activeJobId) {
+        stopPolling();
+        activeJobId = null;
+        currentJobData = null;
+        currentEmpty.hidden = false;
+        currentEmpty.textContent = "Nothing selected yet — start a generation, or pick one from history.";
+        currentJobEl.hidden = true;
+      }
+      lastHistorySignature = ""; // force a real re-render so the removed thumbnail is torn down
+      loadHistory();
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    }
+  }
+
+  deleteBtn.addEventListener("click", () => { if (activeJobId) deleteJob(activeJobId); });
+  deleteBtnFailed.addEventListener("click", () => { if (activeJobId) deleteJob(activeJobId); });
+  deleteBtnStuck.addEventListener("click", () => { if (activeJobId) deleteJob(activeJobId); });
+
+  function renderThumb(job) {
+    if (job.status === "done") {
+      return `<video class="history-thumb" muted preload="metadata" src="/download/${job.job_id}#t=0.5"></video>`;
+    }
+    if (job.status === "failed") {
+      return `<div class="history-thumb-placeholder" style="color:var(--error);">×</div>`;
+    }
+    return `<div class="history-thumb-placeholder spin">⟳</div>`;
+  }
+
+  let allJobs = [];
+  let lastHistorySignature = "";
+  let historySearchQuery = "";
+
+  function renderHistoryStats() {
+    if (allJobs.length === 0) {
+      historyStats.textContent = "";
+      return;
+    }
+    const doneJobs = allJobs.filter((j) => j.status === "done");
+    const totalMinutes = doneJobs.reduce((sum, j) => sum + (j.length_minutes || 0), 0);
+    historyStats.innerHTML = `<strong>${allJobs.length}</strong> video${allJobs.length !== 1 ? "s" : ""} · <strong>${totalMinutes}</strong> min generated`;
+  }
+
+  function renderHistoryList() {
+    renderHistoryStats();
+
+    if (allJobs.length === 0) {
+      historyList.innerHTML = `<div class="history-empty">No jobs yet.</div>`;
+      return;
+    }
+
+    const q = historySearchQuery.trim().toLowerCase();
+    const filtered = q ? allJobs.filter((j) => j.topic.toLowerCase().includes(q)) : allJobs;
+
+    if (filtered.length === 0) {
+      historyList.innerHTML = `<div class="history-empty">No matches for "${escapeHtml(historySearchQuery)}".</div>`;
+      return;
+    }
+
+    historyList.innerHTML = filtered.map((job) => `
+      <div class="history-item" role="button" tabindex="0" data-job-id="${job.job_id}">
+        ${renderThumb(job)}
+        <div class="history-info">
+          <div class="h-topic">${escapeHtml(job.topic)}</div>
+          ${job.status === "done" && job.actual_duration_seconds
+            ? `<div class="h-length">${formatDuration(job.actual_duration_seconds)}</div>`
+            : job.length_minutes ? `<div class="h-length">~${job.length_minutes} min</div>` : ""}
+          <div class="h-meta">
+            <span class="badge ${badgeClass(job.status)}">${job.status.replace("_", " ")}</span>
+            <span class="h-time">${timeAgo(job.created_at)}</span>
+          </div>
+        </div>
+        ${canDeleteJob(job) ? `<button type="button" class="history-delete" data-delete-job-id="${job.job_id}" title="Delete" aria-label="Delete">✕</button>` : ""}
+      </div>
+    `).join("");
+
+    historyList.querySelectorAll(".history-item").forEach((el) => {
+      el.addEventListener("click", () => selectJob(el.dataset.jobId));
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectJob(el.dataset.jobId); }
+      });
+    });
+
+    historyList.querySelectorAll(".history-delete").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteJob(el.dataset.deleteJobId);
+      });
+    });
+
+    markHistoryActive();
+  }
+
+  historySearchInput.addEventListener("input", (e) => {
+    historySearchQuery = e.target.value;
+    renderHistoryList();
+  });
+
+  async function loadHistory() {
+    try {
+      const res = await fetch("/jobs?limit=30");
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) return;
+      const data = await res.json();
+      allJobs = data.jobs || [];
+
+      // Rebuilding the list re-creates each <video> thumbnail, which would
+      // otherwise flicker/re-buffer on every 3s poll tick. Skip the rewrite
+      // when nothing actually changed.
+      const signature = allJobs.map((j) => `${j.job_id}:${j.status}`).join("|");
+      if (signature === lastHistorySignature) {
+        markHistoryActive();
+        return;
+      }
+      lastHistorySignature = signature;
+      renderHistoryList();
+    } catch (err) {
+      // history is a nice-to-have; ignore transient failures
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  async function poll(jobId) {
+    try {
+      const res = await fetch(`/status/${jobId}`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) throw new Error(`status check failed (${res.status})`);
+      const job = await res.json();
+
+      if (jobId !== activeJobId) return; // user navigated to a different job meanwhile
+
+      renderCurrentJob(job);
+      loadHistory();
+
+      if (job.status === "done" || job.status === "failed") {
+        stopPolling();
+        submitBtn.disabled = false;
+        return;
+      }
+      pollTimer = setTimeout(() => poll(jobId), 3000);
+    } catch (err) {
+      stopPolling();
+      submitBtn.disabled = false;
+      if (jobId === activeJobId) {
+        errorBox.hidden = false;
+        errorText.textContent = `Lost connection while checking status: ${err.message}. Reselect this job from history to retry.`;
+      }
+    }
+  }
+
+  async function selectJob(jobId) {
+    stopPolling();
+    activeJobId = jobId;
+    markHistoryActive();
+
+    const res = await fetch(`/status/${jobId}`);
+    if (!res.ok) return;
+    const job = await res.json();
+    renderCurrentJob(job);
+
+    if (job.status !== "done" && job.status !== "failed") {
+      submitBtn.disabled = true;
+      pollTimer = setTimeout(() => poll(jobId), 3000);
+    } else {
+      submitBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const topic = topicInput.value.trim();
+    if (!topic) return;
+
+    submitBtn.disabled = true;
+    try {
+      const params = new URLSearchParams({ topic, length_minutes: lengthSelect.value });
+      const res = await fetch(`/generate?${params}`, { method: "POST" });
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `request failed (${res.status})`);
+      }
+      const data = await res.json();
+      topicInput.value = "";
+      await loadHistory();
+      selectJob(data.job_id);
+    } catch (err) {
+      submitBtn.disabled = false;
+      currentEmpty.hidden = false;
+      currentEmpty.textContent = `Failed to start: ${err.message}`;
+      currentJobEl.hidden = true;
+    }
+  });
+
+  setAuthMode("login");
+  checkAuth();
+</script>
+</body>
+</html>

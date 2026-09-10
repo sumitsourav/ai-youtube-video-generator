@@ -1,15 +1,37 @@
 # app/services/tts_service.py
 
 import os
+import re
+import subprocess
 import sys
-from app.config import AUDIO_NAME, TTS_ENGINE, TTS_VOICE_NAME, TTS_RATE, TTS_VOLUME, TTS_LANGUAGE, ELEVENLABS_API_KEY, TTS_VOICE_ID
+import tempfile
+from app.config import (
+    AUDIO_NAME,
+    ELEVENLABS_API_KEY,
+    POLLY_ENGINE,
+    POLLY_REGION,
+    POLLY_VOICE_ID,
+    TTS_ENGINE,
+    TTS_LANGUAGE,
+    TTS_RATE,
+    TTS_VOICE_ID,
+    TTS_VOICE_NAME,
+    TTS_VOLUME,
+)
+
+# Polly's SynthesizeSpeech caps a request at 3000 billed characters. Scripts
+# run past that at the longer video lengths (a 5-minute script is ~3500), so
+# they're split on sentence boundaries and the parts concatenated. Kept under
+# the ceiling rather than at it so a single long sentence can't tip a chunk
+# over.
+_POLLY_CHUNK_CHARS = 2500
 
 class TTSService:
     """Unified TTS service supporting multiple backends"""
     
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, output_path=None):
         self.engine = engine or TTS_ENGINE
-        self.audio_path = AUDIO_NAME
+        self.audio_path = output_path or AUDIO_NAME
         self.validate_engine()
     
     def validate_engine(self):
@@ -31,6 +53,11 @@ class TTSService:
                 raise ImportError("elevenlabs not installed. Run: pip install elevenlabs")
             if not ELEVENLABS_API_KEY:
                 raise ValueError("ELEVENLABS_API_KEY not set in .env")
+        elif self.engine == "polly":
+            try:
+                import boto3  # noqa: F401
+            except ImportError:
+                raise ImportError("boto3 not installed. Run: pip install boto3")
         else:
             raise ValueError(f"Unknown TTS engine: {self.engine}")
     
@@ -99,6 +126,39 @@ class TTSService:
         print(f"✅ Audio saved to {self.audio_path}")
         return self.audio_path
     
+    def generate_polly(self, text):
+        """Generate audio using Amazon Polly neural voices (most realistic)"""
+        print("🎙️  Generating audio using Amazon Polly...")
+        import boto3
+
+        # No explicit credentials: boto3's default chain picks up the EC2
+        # instance role, so nothing secret has to live in .env.
+        client = boto3.client("polly", region_name=POLLY_REGION)
+
+        chunks = _split_for_polly(text)
+        parts = []
+        try:
+            for index, chunk in enumerate(chunks):
+                response = client.synthesize_speech(
+                    Text=chunk,
+                    OutputFormat="mp3",
+                    VoiceId=POLLY_VOICE_ID,
+                    Engine=POLLY_ENGINE,
+                )
+                part_path = f"{self.audio_path}.part{index}.mp3"
+                with open(part_path, "wb") as handle:
+                    handle.write(response["AudioStream"].read())
+                parts.append(part_path)
+
+            _concat_audio(parts, self.audio_path)
+        finally:
+            for part in parts:
+                if os.path.exists(part):
+                    os.remove(part)
+
+        print(f"✅ Audio saved to {self.audio_path}")
+        return self.audio_path
+
     def generate(self, text):
         """Generate audio using configured engine"""
         if not text or len(text.strip()) == 0:
@@ -110,6 +170,8 @@ class TTSService:
             return self.generate_gtts(text)
         elif self.engine == "elevenlabs":
             return self.generate_elevenlabs(text)
+        elif self.engine == "polly":
+            return self.generate_polly(text)
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
     
@@ -128,8 +190,53 @@ class TTSService:
             return []
 
 
+def _split_for_polly(text, limit=_POLLY_CHUNK_CHARS):
+    """Split on sentence boundaries so no chunk ends mid-sentence - Polly would
+    otherwise drop the intonation of a clipped sentence and the seam would be
+    audible where the parts join."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        if current and len(current) + len(sentence) + 1 > limit:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        chunks.append(current)
+    return chunks or [text]
+
+
+def _concat_audio(parts, output_path):
+    """Join the synthesized parts. Re-encoding through ffmpeg's concat demuxer
+    rather than splicing the MP3 bytes directly, so the result carries one
+    coherent timeline - the render step measures this file's duration to time
+    the captions, and a byte-spliced MP3 reports its length unreliably."""
+    if len(parts) == 1:
+        os.replace(parts[0], output_path)
+        return
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as manifest:
+        for part in parts:
+            manifest.write(f"file '{os.path.abspath(part)}'\n")
+        manifest_path = manifest.name
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", manifest_path, "-c", "copy", output_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        os.remove(manifest_path)
+
+
 # Backward compatibility function
-def generate_audio(text, engine=None):
+def generate_audio(text, engine=None, output_path=None):
     """Legacy function for backward compatibility"""
-    service = TTSService(engine=engine)
+    service = TTSService(engine=engine, output_path=output_path)
     return service.generate(text)

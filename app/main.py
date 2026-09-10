@@ -34,7 +34,7 @@ def run(topic):
             raise Exception("No images found")
 
         print("\n🎬 Creating video...")
-        video = create_video(videos, audio, script)
+        video, _duration = create_video(videos, audio, script)
 
         print(f"\n🎉 Done! Video: {video}")
 

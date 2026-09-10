@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.env
+assets/
+*.md
+test_tts.py
+youtube_fast_api/

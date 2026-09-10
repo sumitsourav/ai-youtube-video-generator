@@ -1,9 +1,22 @@
-FROM python:3.10
+FROM python:3.11-slim
 
 WORKDIR /app
 
+# ffmpeg is required by moviepy for video rendering.
+# espeak-ng (+ its espeak-compatible shim) is required by pyttsx3 for offline TTS.
+# Prefer TTS_ENGINE=gtts in production - it needs no native library, only outbound internet.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    espeak-ng \
+    espeak-ng-espeak \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
-RUN pip install -r requirements.txt
+ENV PORT=8000
+EXPOSE 8000
 
-CMD ["python", "app/main.py"]
+CMD ["sh", "-c", "uvicorn app.api:app --host 0.0.0.0 --port ${PORT}"]
