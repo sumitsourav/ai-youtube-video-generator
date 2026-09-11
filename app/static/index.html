@@ -229,6 +229,7 @@
     vertical-align: middle;
   }
   .badge-length.actual { background: rgba(47,217,145,0.16); color: var(--success); }
+  .badge-length.size { background: rgba(76,201,240,0.16); color: var(--info); }
 
   #current-topic-row { display: flex; align-items: center; gap: 4px; margin: 0 0 14px; flex-wrap: wrap; }
   #current-topic { font-size: 15px; margin: 0; color: var(--text); font-weight: 600; }
@@ -472,6 +473,7 @@
             <p id="current-topic"></p>
             <span class="badge-length" id="current-length" hidden></span>
             <span class="badge-length actual" id="current-actual-length" hidden></span>
+            <span class="badge-length size" id="current-size" hidden></span>
           </div>
           <div class="steps" id="steps"></div>
           <div class="render-progress" id="render-progress" hidden>
@@ -623,6 +625,7 @@
   const currentTopicEl = document.getElementById("current-topic");
   const currentLengthEl = document.getElementById("current-length");
   const currentActualLengthEl = document.getElementById("current-actual-length");
+  const currentSizeEl = document.getElementById("current-size");
   const stepsEl = document.getElementById("steps");
   const renderProgressEl = document.getElementById("render-progress");
   const renderProgressFill = document.getElementById("render-progress-fill");
@@ -688,6 +691,12 @@
     return `${mins}:${String(secs).padStart(2, "0")}`;
   }
 
+  function formatSize(bytes) {
+    if (!bytes) return "";
+    const mb = bytes / (1024 * 1024);
+    return mb < 1 ? `${Math.round(bytes / 1024)} KB` : `${mb.toFixed(1)} MB`;
+  }
+
   function timeAgo(isoString) {
     const diffMs = Date.now() - new Date(isoString).getTime();
     const mins = Math.floor(diffMs / 60000);
@@ -732,6 +741,12 @@
       currentActualLengthEl.textContent = `actual ${formatDuration(job.actual_duration_seconds)}`;
     } else {
       currentActualLengthEl.hidden = true;
+    }
+    if (job.status === "done" && job.video_size_bytes) {
+      currentSizeEl.hidden = false;
+      currentSizeEl.textContent = formatSize(job.video_size_bytes);
+    } else {
+      currentSizeEl.hidden = true;
     }
     renderSteps(job);
 
@@ -883,7 +898,9 @@
         <div class="history-info">
           <div class="h-topic">${escapeHtml(job.topic)}</div>
           ${job.status === "done" && job.actual_duration_seconds
-            ? `<div class="h-length">${formatDuration(job.actual_duration_seconds)}</div>`
+            ? `<div class="h-length">${formatDuration(job.actual_duration_seconds)}${
+                job.video_size_bytes ? ` &middot; ${formatSize(job.video_size_bytes)}` : ""
+              }</div>`
             : job.length_minutes ? `<div class="h-length">~${job.length_minutes} min</div>` : ""}
           <div class="h-meta">
             <span class="badge ${badgeClass(job.status)}">${job.status.replace("_", " ")}</span>

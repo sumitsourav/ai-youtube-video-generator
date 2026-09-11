@@ -213,7 +213,12 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
             output_path=video_path,
             progress_callback=lambda pct: update_job(job_id, render_progress=pct),
         )
-        update_job(job_id, actual_duration_seconds=actual_duration_seconds)
+        # Recorded before the B2 upload, which deletes the local copy.
+        update_job(
+            job_id,
+            actual_duration_seconds=actual_duration_seconds,
+            video_size_bytes=os.path.getsize(video_path),
+        )
 
         video_key = None
         if storage_configured():
