@@ -28,7 +28,7 @@ from app.services.storage_service import (
 )
 from app.services.topic_wise_video import topic_wise_video
 from app.services.tts_service import generate_audio
-from app.services.video_fetch_service import fetch_videos
+from app.services.video_fetch_service import fetch_beat_clips
 from app.services.video_service import create_video
 from app.utils.file_utils import ensure_dirs
 
@@ -180,7 +180,7 @@ def _set_step(job_id: str, step: str):
 def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
     try:
         _set_step(job_id, "generating_script")
-        script, keywords = generate_script_and_keywords(
+        script, beats = generate_script_and_keywords(
             topic, length_minutes=length_minutes
         )
         if not script:
@@ -191,23 +191,30 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
         # background while the (much slower) voiceover renders, keeping it off
         # the critical path.
         with ThreadPoolExecutor(max_workers=1) as fetch_executor:
-            fetch_future = fetch_executor.submit(fetch_videos, keywords)
+            fetch_future = fetch_executor.submit(
+                fetch_beat_clips, [beat["phrase"] for beat in beats]
+            )
 
             _set_step(job_id, "generating_audio")
             audio_path = os.path.join(AUDIO_DIR, f"{job_id}.wav")
-            generate_audio(script, output_path=audio_path)
+            generate_audio(
+                script, output_path=audio_path, target_seconds=length_minutes * 60
+            )
 
             _set_step(job_id, "fetching_videos")
-            videos = fetch_future.result()
+            clip_groups = fetch_future.result()
 
-        if not videos:
+        for beat, clips in zip(beats, clip_groups):
+            beat["clips"] = clips
+
+        if not any(beat["clips"] for beat in beats):
             raise RuntimeError("No source videos found for this topic")
 
         _set_step(job_id, "rendering_video")
         update_job(job_id, render_progress=0)
         video_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
         _, actual_duration_seconds = create_video(
-            videos,
+            beats,
             audio_path,
             script,
             output_path=video_path,

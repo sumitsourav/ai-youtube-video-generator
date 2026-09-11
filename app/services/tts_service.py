@@ -27,12 +27,22 @@ from app.config import (
 # over.
 _POLLY_CHUNK_CHARS = 2500
 
+# Measured end-to-end on real generated scripts: at a 70% prosody rate Polly
+# delivers ~122 words per minute once its pauses at sentence and paragraph
+# breaks are counted. Duration scales linearly with the rate, which is what
+# lets _fit_rate solve for it.
+_BASE_RATE_PERCENT = 70
+_BASE_WPM = 122
+_MIN_RATE_PERCENT = 58
+_MAX_RATE_PERCENT = 92
+
 class TTSService:
     """Unified TTS service supporting multiple backends"""
     
-    def __init__(self, engine=None, output_path=None):
+    def __init__(self, engine=None, output_path=None, target_seconds=None):
         self.engine = engine or TTS_ENGINE
         self.audio_path = output_path or AUDIO_NAME
+        self.target_seconds = target_seconds
         self.validate_engine()
     
     def validate_engine(self):
@@ -136,12 +146,13 @@ class TTSService:
         # instance role, so nothing secret has to live in .env.
         client = boto3.client("polly", region_name=POLLY_REGION)
 
+        rate = _fit_rate(text, self.target_seconds)
         chunks = _split_for_polly(text)
         parts = []
         try:
             for index, chunk in enumerate(chunks):
                 response = client.synthesize_speech(
-                    Text=_to_ssml(chunk),
+                    Text=_to_ssml(chunk, rate),
                     TextType="ssml",
                     OutputFormat="mp3",
                     VoiceId=POLLY_VOICE_ID,
@@ -192,7 +203,7 @@ class TTSService:
             return []
 
 
-def _to_ssml(text):
+def _to_ssml(text, rate=None):
     """Wrap narration in SSML so it can be slowed down. Matthew reads at ~207
     wpm unprompted, which is too brisk to sound like documentary narration -
     70% brings it to ~148 wpm, both measured on real synthesis. The escape
@@ -201,7 +212,31 @@ def _to_ssml(text):
     escaped = (
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
-    return f'<speak><prosody rate="{POLLY_RATE}">{escaped}</prosody></speak>'
+    return f'<speak><prosody rate="{rate or POLLY_RATE}">{escaped}</prosody></speak>'
+
+
+def _fit_rate(text, target_seconds):
+    """Pick the speaking rate that makes this script land on the requested
+    length.
+
+    The model will not reliably write to a word count. Asked for the same
+    3-minute script twice it returned 344 words once and 212 the next time,
+    which is the difference between a 3:14 video and a 1:47 one, and no amount
+    of prompt tightening made it dependable. Rather than keep guessing at the
+    word target, the script is taken as given and the delivery is fitted to
+    it, which is arithmetic rather than persuasion.
+
+    Clamped because rate is a voice quality setting as much as a timing one -
+    past these bounds the narration starts to sound wrong, so an extremely
+    short script stays short instead of being dragged out into a drawl.
+    """
+    words = len(text.split())
+    if not words or not target_seconds:
+        return POLLY_RATE
+
+    required_wpm = words / (target_seconds / 60)
+    rate = _BASE_RATE_PERCENT * required_wpm / _BASE_WPM
+    return f"{round(max(_MIN_RATE_PERCENT, min(_MAX_RATE_PERCENT, rate)))}%"
 
 
 def _split_for_polly(text, limit=_POLLY_CHUNK_CHARS):
@@ -250,7 +285,7 @@ def _concat_audio(parts, output_path):
 
 
 # Backward compatibility function
-def generate_audio(text, engine=None, output_path=None):
+def generate_audio(text, engine=None, output_path=None, target_seconds=None):
     """Legacy function for backward compatibility"""
-    service = TTSService(engine=engine, output_path=output_path)
+    service = TTSService(engine=engine, output_path=output_path, target_seconds=target_seconds)
     return service.generate(text)

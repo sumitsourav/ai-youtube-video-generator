@@ -192,84 +192,106 @@ _SCRIPT_MARKER = "===SCRIPT==="
 _KEYWORDS_MARKER = "===KEYWORDS==="
 _LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
+_BEAT_MARKER = "===BEAT==="
+_PHRASE_LABEL = "PHRASE:"
+_NARRATION_LABEL = "NARRATION:"
 
-def generate_script_and_keywords(topic, length_minutes=2, max_keywords=4):
-    """One request for both the narration and the stock-footage search phrases.
 
-    These used to be two separate calls. They need the same context and the
-    keywords are a few dozen tokens, so folding them together halves the
-    requests charged against the free-tier daily quotas at no cost to either
-    output.
+def _beat_count(length_minutes):
+    """Enough beats that the footage keeps up with the narration, few enough
+    that the model actually writes all of them.
 
-    Keywords exist because a raw topic search ("quantum computing") returns
-    nothing usable from stock libraries - the model translates it into
-    concrete, filmable subjects.
+    Nine is where compliance stops: asked for nine the model writes nine, and
+    asked for ten it writes five and quits mid-story. Longer videos therefore
+    get more words per beat rather than more beats. Cut frequency doesn't
+    depend on this, since shots are subdivided within each beat.
+    """
+    return max(4, min(9, length_minutes * 3))
+
+
+def generate_script_and_keywords(topic, length_minutes=2):
+    """Generate the narration already divided into beats, each carrying the
+    search phrase for what should be on screen while it's spoken.
+
+    Returns (full_script, beats) where each beat is {"text", "phrase"}.
+
+    Asking for one set of phrases for the whole video meant footage had no
+    relationship to what was being said at any given moment - a tribute to a
+    cricketer played forest footage under the line about the World Cup. Tying
+    each phrase to the beat it illustrates is what lets the render place a
+    clip during the narration it actually matches.
+
+    Phrases have to stay generic: stock libraries have no footage of specific
+    people or events, so a phrase naming one returns something unrelated
+    rather than nothing.
     """
     target_words = _compensated_word_target(length_minutes)
+    beats = _beat_count(length_minutes)
+    per_beat_words = max(20, round(target_words / beats))
     prompt = f"""
-Write a YouTube documentary voiceover script about: {topic}
+Write exactly {beats} beats of a YouTube documentary voiceover script about: {topic}
 
-Content:
-- Open with the single most surprising, specific, or little-known fact about this topic - not generic scene-setting
-- Use concrete details throughout: real names, numbers, dates, places, specific events - not vague generalities
-- Tell it as a story with a throughline, not a list of disconnected inspirational statements
-- Include at least one fact most people wouldn't already know
-- Prioritize genuinely interesting or counterintuitive information over abstract emotion
+Each beat is approximately {per_beat_words} words of narration ({target_words} words total). Write all {beats} beats and give each one its full {per_beat_words} words - do not stop early because the story feels finished. Read end to end the beats are one continuous script; a listener should not hear where one ends and the next begins.
 
-Rules:
-- Only narration text
-- No scene descriptions
-- No labels like Narrator
-- No brackets []
-- No "cut to", "scene", "shot"
-- Write in paragraph format
+Each beat also gets a stock-footage search phrase for what is ON SCREEN while it is spoken:
+- 2-4 words naming concrete filmable things: objects, places, actions, nature, settings
+- It must match what THAT beat is talking about
+- Never a proper noun - stock libraries hold no footage of specific people or events, so describe the generic scene ("cricket stadium crowd", never "Sachin Tendulkar")
+- Each phrase is searched on its own with no other context, so name the subject in every one. For a cricket story write "cricket crowd cheering", not "crowd cheering" - the bare phrase returns football and rugby instead.
 
-Style:
-- Vary sentence length - mix short punchy lines with longer flowing ones, not a monotonous run of short sentences
-- Specific and vivid language, not generic
-- Avoid clichés like "the human spirit," "journey," "forever changed," "against all odds," "a beacon of hope"
-- Concrete, specific hook in the first two sentences - not an abstract mood-setter
-- Confident, cinematic narration voice, grounded in real detail rather than empty inspiration
-
-Length: approximately {target_words} words total (this is a hard target - it will be read aloud as narration at a measured pace, so stick close to this word count rather than what "feels right" for the topic)
-
-Then list {max_keywords} short search phrases (2-4 words each) for finding stock video footage to illustrate this script.
-- Only concrete, filmable things: objects, places, actions, nature, settings
-- No abstract ideas or concepts
-- One phrase per line, no numbering, no bullets
+Narration content:
+- Open with the single most surprising, specific, or little-known fact - not scene-setting
+- Concrete detail throughout: real names, numbers, dates, places, events
+- One throughline, not disconnected inspirational statements
+- Include at least one fact most people wouldn't know
+- Vary sentence length; avoid clichés like "the human spirit", "against all odds", "a beacon of hope"
+- Narration text only: no scene descriptions, no speaker labels, no brackets, no "cut to"
 
 Reply in exactly this format, with no other text:
-{_SCRIPT_MARKER}
-<the narration script>
-{_KEYWORDS_MARKER}
-<phrase>
-<phrase>
+{_BEAT_MARKER}
+{_PHRASE_LABEL} <search phrase>
+{_NARRATION_LABEL} <narration for this beat>
+{_BEAT_MARKER}
+{_PHRASE_LABEL} <search phrase>
+{_NARRATION_LABEL} <narration for this beat>
 """
     # Reasoning models bill their hidden thinking against this same budget, so
-    # the allowance covers the script, the keywords, and room to think.
-    text = _complete(prompt, max_tokens=target_words * 3 + 1200)
-    return _parse_script_and_keywords(text, topic)
+    # the allowance covers the script, the beats, and room to think.
+    text = _complete(prompt, max_tokens=target_words * 3 + 1500)
+    return _parse_beats(text, topic)
 
 
-def _parse_script_and_keywords(text, topic):
-    body = text.split(_SCRIPT_MARKER, 1)[-1]
+def _parse_beats(text, topic):
+    beats = []
+    for block in text.split(_BEAT_MARKER)[1:]:
+        phrase = narration = ""
+        collecting = None
+        for line in block.splitlines():
+            stripped = _LIST_MARKER.sub("", line).strip()
+            if stripped.upper().startswith(_PHRASE_LABEL):
+                phrase = stripped[len(_PHRASE_LABEL):].strip()
+                collecting = "phrase"
+            elif stripped.upper().startswith(_NARRATION_LABEL):
+                narration = stripped[len(_NARRATION_LABEL):].strip()
+                collecting = "narration"
+            elif stripped and collecting == "narration":
+                # Narration that wrapped onto its own lines.
+                narration = f"{narration} {stripped}".strip()
 
-    if _KEYWORDS_MARKER in body:
-        script_part, keyword_part = body.split(_KEYWORDS_MARKER, 1)
-        # Strips a leading bullet or "1." only - a blunt digit strip would eat
-        # the year out of phrases like "18th century coffee house".
-        keywords = [
-            _LIST_MARKER.sub("", line).strip()
-            for line in keyword_part.strip().splitlines()
-            if line.strip()
-        ]
-        keywords = [k for k in keywords if k] or [topic]
-    else:
-        # Model ignored the format but still produced usable narration - keep
-        # the script rather than burning another provider's quota on a retry.
-        script_part, keywords = body, [topic]
+        if narration:
+            beats.append({"text": narration, "phrase": phrase or topic})
 
-    return script_part.strip(), keywords
+    if not beats:
+        # Model ignored the format. Rather than spend another provider's quota
+        # retrying, fall back to the old whole-script behaviour: usable video,
+        # just without beat-aligned footage.
+        fallback = text.split(_SCRIPT_MARKER, 1)[-1].split(_KEYWORDS_MARKER, 1)[0].strip()
+        if not fallback:
+            raise RuntimeError("Script generation returned no usable narration")
+        return fallback, [{"text": fallback, "phrase": topic}]
+
+    script = "\n\n".join(beat["text"] for beat in beats)
+    return script, beats
 
 
 def generate_script(topic, length_minutes=2):

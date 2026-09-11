@@ -9,6 +9,24 @@ HEIGHT = 1280
 FPS = 24
 FADE_SECONDS = 1
 
+# Documentary pacing is a cut every few seconds. The old render divided the
+# audio evenly across whatever clips were fetched, which left a single shot on
+# screen for 30-45 seconds and read as a slideshow. The cap keeps a 5-minute
+# video from turning into 75 ffmpeg inputs - past ~40 the filter graph costs
+# more to build than the extra cuts are worth.
+MIN_SHOT_SECONDS = 4.0
+MAX_SHOTS = 40
+
+# One grade over every clip. Stock footage is pulled from unrelated shoots -
+# a floodlit pitch next to desaturated archive next to a bright forest - and
+# without a shared curve the cuts read as a folder of downloads rather than
+# one piece. Deliberately subtle: cool the shadows, warm the highlights, pull
+# saturation back slightly.
+COLOR_GRADE = (
+    "eq=contrast=1.07:saturation=0.93,"
+    "colorbalance=rs=-0.02:bs=0.04:rh=0.03:bh=-0.02"
+)
+
 # CRF 30 + slow preset cuts output size by ~66% vs libx264's untuned defaults
 # (CRF 23, medium preset), measured on a 20s 720x1280 test clip (2.58MB vs
 # 7.53MB). Quality cost is small but real: SSIM 0.963 vs a near-lossless
@@ -146,16 +164,62 @@ def _escape_filter_path(path: str) -> str:
     return path.replace("\\", "\\\\").replace(":", "\\:")
 
 
-def create_video(video_files, audio_file, script_text, output_path=None, progress_callback=None):
+def _nearest_clips(beats, index):
+    candidates = [i for i, beat in enumerate(beats) if beat.get("clips")]
+    if not candidates:
+        return []
+    return beats[min(candidates, key=lambda i: abs(i - index))]["clips"]
+
+
+def _plan_shots(beats, audio_duration):
+    """Lay the beats out on the timeline and split each into short shots.
+
+    A beat's share of the running time is its share of the script's characters
+    - the same model _build_srt uses for captions, so the footage and the words
+    move together instead of drifting apart.
+    """
+    total_chars = sum(len(beat["text"]) for beat in beats) or 1
+    shot_seconds = max(MIN_SHOT_SECONDS, audio_duration / MAX_SHOTS)
+
+    shots = []
+    elapsed = 0.0
+    for index, beat in enumerate(beats):
+        is_last = index == len(beats) - 1
+        beat_end = audio_duration if is_last else elapsed + len(beat["text"]) / total_chars * audio_duration
+        beat_duration = max(0.1, beat_end - elapsed)
+
+        # A beat with no clips would leave a hole in the timeline, and -shortest
+        # would then cut the video off at the hole rather than run to the end
+        # of the narration. Borrow from the nearest beat that has something.
+        clips = beat.get("clips") or _nearest_clips(beats, index)
+        if not clips:
+            elapsed = beat_end
+            continue
+
+        shot_count = max(1, round(beat_duration / shot_seconds))
+        each = beat_duration / shot_count
+        for shot_index in range(shot_count):
+            clip = clips[shot_index % len(clips)]
+            # Start further into the source each time a clip comes back round,
+            # so a beat with one clip doesn't replay the same seconds.
+            offset = (shot_index // len(clips)) * each
+            shots.append({"path": clip, "duration": each, "offset": offset})
+
+        elapsed = beat_end
+
+    return shots
+
+
+def create_video(beats, audio_file, script_text, output_path=None, progress_callback=None):
     output_path = output_path or VIDEO_NAME
 
-    if not video_files:
+    if not beats or not any(beat.get("clips") for beat in beats):
         raise Exception("No videos fetched")
 
     audio_duration = _probe_duration(audio_file)
-    clip_count = len(video_files)
-    duration_per_clip = audio_duration / clip_count
-    fade_out_start = max(0.0, duration_per_clip - FADE_SECONDS)
+    shots = _plan_shots(beats, audio_duration)
+    shot_count = len(shots)
+    fade_out_start = max(0.0, audio_duration - FADE_SECONDS)
 
     pause_points = _detect_pause_points(audio_file)
 
@@ -165,33 +229,41 @@ def create_video(video_files, audio_file, script_text, output_path=None, progres
         srt_file.close()
 
         cmd = ["ffmpeg", "-y", "-loglevel", "error"]
-        for video_path in video_files:
+        for shot in shots:
             # -stream_loop -1 loops the input indefinitely; the -t before -i caps
             # how much of it is actually read. Together they handle both "source
             # shorter than needed" (loops to fill) and "source longer than
             # needed" (just trimmed) without probing each clip's own duration.
-            cmd += ["-stream_loop", "-1", "-t", f"{duration_per_clip:.3f}", "-i", video_path]
+            cmd += ["-stream_loop", "-1"]
+            if shot["offset"]:
+                cmd += ["-ss", f"{shot['offset']:.3f}"]
+            cmd += ["-t", f"{shot['duration']:.3f}", "-i", shot["path"]]
         cmd += ["-i", audio_file]
 
         filter_parts = []
         concat_inputs = ""
-        for i in range(clip_count):
+        for i in range(shot_count):
+            # Hard cuts between shots: at a few seconds each, fading every one
+            # in and out would spend most of the video dipped toward black.
             filter_parts.append(
                 f"[{i}:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={WIDTH}:{HEIGHT},fps={FPS},format=yuv420p,setsar=1,"
-                f"fade=t=in:st=0:d={FADE_SECONDS},fade=t=out:st={fade_out_start:.3f}:d={FADE_SECONDS}[v{i}]"
+                f"crop={WIDTH}:{HEIGHT},fps={FPS},{COLOR_GRADE},format=yuv420p,setsar=1[v{i}]"
             )
             concat_inputs += f"[v{i}]"
-        filter_parts.append(f"{concat_inputs}concat=n={clip_count}:v=1:a=0[vconcat]")
+        filter_parts.append(f"{concat_inputs}concat=n={shot_count}:v=1:a=0[vconcat]")
         filter_parts.append(
-            f"[vconcat]subtitles={_escape_filter_path(srt_file.name)}:"
+            f"[vconcat]fade=t=in:st=0:d={FADE_SECONDS},"
+            f"fade=t=out:st={fade_out_start:.3f}:d={FADE_SECONDS}[vfaded]"
+        )
+        filter_parts.append(
+            f"[vfaded]subtitles={_escape_filter_path(srt_file.name)}:"
             f"original_size={WIDTH}x{HEIGHT}:force_style='{CAPTION_STYLE}'[vout]"
         )
 
         cmd += [
             "-filter_complex", ";".join(filter_parts),
             "-map", "[vout]",
-            "-map", f"{clip_count}:a",
+            "-map", f"{shot_count}:a",
             "-c:v", "libx264",
             "-crf", VIDEO_CRF,
             "-preset", VIDEO_PRESET,
