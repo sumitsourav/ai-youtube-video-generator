@@ -44,11 +44,18 @@ TTS_ENGINE = os.getenv("TTS_ENGINE", "pyttsx3")
 
 # Amazon Polly. Credentials come from the standard boto3 chain - on EC2 that's
 # the instance's IAM role, so no keys need to live in .env.
-POLLY_REGION = os.getenv("POLLY_REGION", "ap-south-1")
-POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Matthew")
-POLLY_ENGINE = os.getenv("POLLY_ENGINE", "neural")
-# Slows the voice to documentary pace; see _to_ssml in tts_service.py.
-POLLY_RATE = os.getenv("POLLY_RATE", "70%")
+#
+# long-form is Polly's narration engine and sounds markedly better than neural
+# for this. It isn't offered in every region - notably not ap-south-1, where
+# the instance runs - so Polly is called cross-region. IAM is global, so the
+# instance role still covers it, and TTS latency is a rounding error next to
+# the render.
+POLLY_REGION = os.getenv("POLLY_REGION", "us-east-1")
+POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Gregory")
+POLLY_ENGINE = os.getenv("POLLY_ENGINE", "long-form")
+# long-form already reads at a measured 127 wpm unprompted, so unlike the
+# neural voices it needs no slowing down. See _fit_rate in tts_service.py.
+POLLY_RATE = os.getenv("POLLY_RATE", "100%")
 TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "")  # For ElevenLabs: use voice ID
 TTS_VOICE_NAME = os.getenv("TTS_VOICE_NAME", "default")  # For pyttsx3: voice name
 TTS_RATE = int(os.getenv("TTS_RATE", "150"))  # Speech rate (75-300, default 150)

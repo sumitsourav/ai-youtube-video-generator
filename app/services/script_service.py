@@ -163,14 +163,12 @@ def _complete(prompt: str, max_tokens: int) -> str:
 _WORDS_PER_MINUTE_BY_ENGINE = {
     "gtts": 120,
     "pyttsx3": 120,
-    # Calibrated end-to-end on real generated scripts, not on clean prose.
-    # Polly reads continuous paragraphs at 148 wpm here, but real scripts are
-    # full of short sentences and paragraph breaks that it pauses on, and the
-    # model tends to run a few percent over the word target - together those
-    # drag the delivered pace down to ~122. Calibrating on the flowing-prose
-    # number instead produced a 2:35 video for a 2:00 request. Only valid
-    # while POLLY_RATE stays at 70%.
-    "polly": 122,
+    # Measured end-to-end on real generated scripts for the configured voice
+    # (long-form Gregory). This only sets the word count asked of the model -
+    # the delivered length is trued up afterwards by fitting the speaking rate
+    # in tts_service - so it needs to be close enough to keep that fitted rate
+    # inside its clamp, not exact.
+    "polly": 127,
     "elevenlabs": 140,
 }
 
@@ -191,6 +189,14 @@ def _compensated_word_target(length_minutes):
 _SCRIPT_MARKER = "===SCRIPT==="
 _KEYWORDS_MARKER = "===KEYWORDS==="
 _LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+
+# Reasoning models bill their hidden thinking against the same max_tokens as
+# the answer, and this prompt provokes a lot of it - a 4-minute script spent
+# 2487 tokens reasoning and had 400 left to write with, so it stopped
+# mid-sentence and the video came out 1:00 instead of 4:00. reasoning_effort
+# "low" does not hold it down on a prompt with this many constraints, so the
+# budget carries the thinking instead. Unused headroom costs nothing.
+_REASONING_HEADROOM_TOKENS = 4000
 
 _BEAT_MARKER = "===BEAT==="
 _PHRASE_LABEL = "PHRASE:"
@@ -255,9 +261,7 @@ Reply in exactly this format, with no other text:
 {_PHRASE_LABEL} <search phrase>
 {_NARRATION_LABEL} <narration for this beat>
 """
-    # Reasoning models bill their hidden thinking against this same budget, so
-    # the allowance covers the script, the beats, and room to think.
-    text = _complete(prompt, max_tokens=target_words * 3 + 1500)
+    text = _complete(prompt, max_tokens=target_words * 3 + _REASONING_HEADROOM_TOKENS)
     return _parse_beats(text, topic)
 
 

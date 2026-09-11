@@ -27,14 +27,23 @@ from app.config import (
 # over.
 _POLLY_CHUNK_CHARS = 2500
 
-# Measured end-to-end on real generated scripts: at a 70% prosody rate Polly
-# delivers ~122 words per minute once its pauses at sentence and paragraph
-# breaks are counted. Duration scales linearly with the rate, which is what
-# lets _fit_rate solve for it.
-_BASE_RATE_PERCENT = 70
-_BASE_WPM = 122
-_MIN_RATE_PERCENT = 58
-_MAX_RATE_PERCENT = 92
+# Measured end-to-end on a real generated script, paragraph breaks and all -
+# clean prose reads much faster and calibrating on it produced a 2:35 video
+# for a 2:00 request. Gregory on the long-form engine delivers ~127 wpm at
+# its natural rate; the same script ran 108 wpm at 85% and 90 at 70%, so
+# duration scales linearly with the rate, which is what lets _fit_rate solve
+# for it. Rate is a voice-quality setting as much as a timing one, hence the
+# clamp: ~89 wpm at the floor already drags, and the ceiling keeps a long
+# script from being rushed.
+_BASE_RATE_PERCENT = 100
+_BASE_WPM = 127
+_MIN_RATE_PERCENT = 70
+_MAX_RATE_PERCENT = 130
+
+# Past this much drift the audio is resynthesised once at a corrected rate.
+# Set below the 15s the video is allowed to be off by, so a correction only
+# fires when it would otherwise miss.
+_RETRY_TOLERANCE_SECONDS = 8
 
 class TTSService:
     """Unified TTS service supporting multiple backends"""
@@ -147,10 +156,28 @@ class TTSService:
         client = boto3.client("polly", region_name=POLLY_REGION)
 
         rate = _fit_rate(text, self.target_seconds)
-        chunks = _split_for_polly(text)
+        self._synthesize_at(client, text, rate)
+
+        # Predicting the rate from an average words-per-minute leaves a few
+        # percent of error, which is invisible on a one-minute video and about
+        # 25 seconds on a five-minute one. The finished audio is right here to
+        # measure, so rather than trust the estimate, check it and correct once
+        # against what was actually produced.
+        if self.target_seconds:
+            actual = _probe_duration(self.audio_path)
+            if actual and abs(actual - self.target_seconds) > _RETRY_TOLERANCE_SECONDS:
+                corrected = _scale_rate(rate, actual / self.target_seconds)
+                if corrected != rate:
+                    print(f"   {actual:.0f}s vs {self.target_seconds}s target, retrying at {corrected}")
+                    self._synthesize_at(client, text, corrected)
+
+        print(f"✅ Audio saved to {self.audio_path}")
+        return self.audio_path
+
+    def _synthesize_at(self, client, text, rate):
         parts = []
         try:
-            for index, chunk in enumerate(chunks):
+            for index, chunk in enumerate(_split_for_polly(text)):
                 response = client.synthesize_speech(
                     Text=_to_ssml(chunk, rate),
                     TextType="ssml",
@@ -168,9 +195,6 @@ class TTSService:
             for part in parts:
                 if os.path.exists(part):
                     os.remove(part)
-
-        print(f"✅ Audio saved to {self.audio_path}")
-        return self.audio_path
 
     def generate(self, text):
         """Generate audio using configured engine"""
@@ -204,15 +228,33 @@ class TTSService:
 
 
 def _to_ssml(text, rate=None):
-    """Wrap narration in SSML so it can be slowed down. Matthew reads at ~207
-    wpm unprompted, which is too brisk to sound like documentary narration -
-    70% brings it to ~148 wpm, both measured on real synthesis. The escape
-    matters: an unescaped & or < in a script would make Polly reject the whole
-    request as malformed SSML."""
+    """Wrap narration in SSML so its rate can be set. The escape matters: an
+    unescaped & or < in a script would make Polly reject the whole request as
+    malformed SSML."""
     escaped = (
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
     return f'<speak><prosody rate="{rate or POLLY_RATE}">{escaped}</prosody></speak>'
+
+
+def _probe_duration(path):
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", path],
+        capture_output=True, text=True,
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _scale_rate(rate, factor):
+    """Speaking faster by `factor` shortens the audio by the same factor, so
+    the correction is just the current rate times how far off it came out."""
+    current = float(rate.rstrip("%"))
+    scaled = current * factor
+    return f"{round(max(_MIN_RATE_PERCENT, min(_MAX_RATE_PERCENT, scaled)))}%"
 
 
 def _fit_rate(text, target_seconds):
