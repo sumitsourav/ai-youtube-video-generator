@@ -215,7 +215,7 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
 
             _set_step(job_id, "generating_audio")
             audio_path = os.path.join(AUDIO_DIR, f"{job_id}.wav")
-            generate_audio(
+            _, word_timings = generate_audio(
                 script,
                 output_path=audio_path,
                 target_seconds=length_minutes * 60,
@@ -245,6 +245,7 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
             script,
             output_path=video_path,
             progress_callback=lambda pct: update_job(job_id, render_progress=pct),
+            word_timings=word_timings,
         )
         # Recorded before the B2 upload, which deletes the local copy.
         update_job(

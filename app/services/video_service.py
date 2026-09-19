@@ -142,7 +142,49 @@ def _snap_to_pauses(boundaries, pause_points, tolerance=0.8, min_gap=0.3):
     return snapped
 
 
-def _build_srt(script_text: str, duration: float, pause_points=None) -> str:
+def _chunk_word_timings(word_timings, max_chars=MAX_CAPTION_CHARS):
+    """Same grouping rule as _chunk_script, but over timed words instead of
+    plain text, so each resulting chunk keeps the exact start time Polly
+    reported for its first word."""
+    chunks = []
+    current, current_len = [], 0
+    for timing in word_timings:
+        added_len = len(timing["word"]) + (1 if current else 0)
+        if current and current_len + added_len > max_chars:
+            chunks.append(current)
+            current, current_len = [], 0
+            added_len = len(timing["word"])
+        current.append(timing)
+        current_len += added_len
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _build_srt_from_word_timings(word_timings: list, duration: float) -> str:
+    """Captions timed to the millisecond, from the same word marks Polly used
+    to speak them - not an estimate corrected after the fact. A caption
+    changes at the instant its first word is actually spoken, which is what
+    makes word-by-word captions read as "popping" rather than drifting."""
+    chunks = _chunk_word_timings(word_timings)
+    lines = []
+    for i, chunk in enumerate(chunks):
+        text = " ".join(timing["word"] for timing in chunk)
+        start = chunk[0]["start"]
+        end = chunks[i + 1][0]["start"] if i + 1 < len(chunks) else duration
+        end = max(end, start + 0.1)
+        lines.append(f"{i + 1}\n{_format_srt_time(start)} --> {_format_srt_time(end)}\n{text}\n")
+    return "\n".join(lines)
+
+
+def _build_srt(script_text: str, duration: float, pause_points=None, word_timings=None) -> str:
+    if word_timings:
+        return _build_srt_from_word_timings(word_timings, duration)
+
+    # Fallback for engines that don't report word timing (gtts, pyttsx3,
+    # elevenlabs): estimate each caption's share of the audio from its share
+    # of the script's characters, then correct the estimate against real
+    # acoustic pauses detected in the audio.
     chunks = _chunk_script(script_text)
     total_chars = sum(len(c) for c in chunks) or 1
 
@@ -248,7 +290,9 @@ def _plan_shots(beats, audio_duration):
     return shots
 
 
-def create_video(beats, audio_file, script_text, output_path=None, progress_callback=None):
+def create_video(
+    beats, audio_file, script_text, output_path=None, progress_callback=None, word_timings=None
+):
     output_path = output_path or VIDEO_NAME
 
     if not beats or not any(beat.get("clips") or beat.get("stills") for beat in beats):
@@ -259,11 +303,13 @@ def create_video(beats, audio_file, script_text, output_path=None, progress_call
     shot_count = len(shots)
     fade_out_start = max(0.0, audio_duration - FADE_SECONDS)
 
-    pause_points = _detect_pause_points(audio_file)
+    # Silence detection is only needed to correct the character-count
+    # estimate - pointless work when real word timings are already exact.
+    pause_points = None if word_timings else _detect_pause_points(audio_file)
 
     srt_file = tempfile.NamedTemporaryFile(mode="w", suffix=".srt", delete=False, encoding="utf-8")
     try:
-        srt_file.write(_build_srt(script_text, audio_duration, pause_points))
+        srt_file.write(_build_srt(script_text, audio_duration, pause_points, word_timings))
         srt_file.close()
 
         cmd = ["ffmpeg", "-y", "-loglevel", "error"]

@@ -1,5 +1,6 @@
 # app/services/tts_service.py
 
+import json
 import os
 import re
 import subprocess
@@ -53,6 +54,10 @@ class TTSService:
         self.audio_path = output_path or AUDIO_NAME
         self.target_seconds = target_seconds
         self.voice = voice or POLLY_VOICE_ID
+        # Populated only by generate_polly, since Polly is the only engine that
+        # returns word-level timing. None here means "no exact timings" and
+        # callers fall back to estimating caption timing from character counts.
+        self.word_timings = None
         self.validate_engine()
     
     def validate_engine(self):
@@ -177,21 +182,39 @@ class TTSService:
 
     def _synthesize_at(self, client, text, rate):
         parts = []
+        word_timings = []
+        offset = 0.0
         try:
             for index, chunk in enumerate(_split_for_polly(text)):
+                ssml = _to_ssml(chunk, rate)
                 response = client.synthesize_speech(
-                    Text=_to_ssml(chunk, rate),
-                    TextType="ssml",
-                    OutputFormat="mp3",
-                    VoiceId=self.voice,
-                    Engine=POLLY_ENGINE,
+                    Text=ssml, TextType="ssml", OutputFormat="mp3",
+                    VoiceId=self.voice, Engine=POLLY_ENGINE,
                 )
                 part_path = f"{self.audio_path}.part{index}.mp3"
                 with open(part_path, "wb") as handle:
                     handle.write(response["AudioStream"].read())
                 parts.append(part_path)
 
+                # A second request for the same text, at the same rate, gets
+                # the same timing - Polly's synthesis is deterministic given
+                # identical input. Marks come back as milliseconds from the
+                # start of this chunk, so they're shifted by the running total
+                # of the chunks already placed, using each part's real
+                # measured duration rather than the requested one, since a
+                # sentence-boundary split rarely divides the audio exactly
+                # where the character count implied.
+                for mark in _fetch_word_marks(client, ssml, self.voice):
+                    word_timings.append(
+                        {
+                            "word": mark["value"],
+                            "start": offset + mark["time"] / 1000,
+                        }
+                    )
+                offset += _probe_duration(part_path) or 0.0
+
             _concat_audio(parts, self.audio_path)
+            self.word_timings = word_timings or None
         finally:
             for part in parts:
                 if os.path.exists(part):
@@ -236,6 +259,23 @@ def _to_ssml(text, rate=None):
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
     return f'<speak><prosody rate="{rate or POLLY_RATE}">{escaped}</prosody></speak>'
+
+
+def _fetch_word_marks(client, ssml, voice):
+    """Word-level timing for one chunk. Polly only emits speech marks for
+    OutputFormat=json, separate from the audio request - there's no combined
+    call - so this doubles the request count per chunk. It's still one extra
+    request per beat's-worth of narration, not per word."""
+    response = client.synthesize_speech(
+        Text=ssml, TextType="ssml", OutputFormat="json",
+        SpeechMarkTypes=["word"], VoiceId=voice, Engine=POLLY_ENGINE,
+    )
+    raw = response["AudioStream"].read().decode("utf-8")
+    marks = []
+    for line in raw.splitlines():
+        if line.strip():
+            marks.append(json.loads(line))
+    return marks
 
 
 def _probe_duration(path):
@@ -329,6 +369,10 @@ def _concat_audio(parts, output_path):
 
 # Backward compatibility function
 def generate_audio(text, engine=None, output_path=None, target_seconds=None, voice=None):
-    """Legacy function for backward compatibility"""
+    """Returns (audio_path, word_timings). word_timings is a list of
+    {"word", "start"} in seconds for engines that report it (Polly); None for
+    the others, so callers fall back to estimating caption timing from
+    character counts."""
     service = TTSService(engine=engine, output_path=output_path, target_seconds=target_seconds, voice=voice)
-    return service.generate(text)
+    path = service.generate(text)
+    return path, service.word_timings
