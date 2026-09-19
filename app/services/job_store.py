@@ -16,14 +16,15 @@ _ALLOWED_UPDATE_FIELDS = {
     "actual_duration_seconds",
     "video_size_bytes",
     "image_credits",
+    "template",
 }
 
 
-def create_job(job_id: str, topic: str, status: str, created_at: str, user_id: int, length_minutes: int):
+def create_job(job_id: str, topic: str, status: str, created_at: str, user_id: int, length_minutes: int, template: str = None):
     with closing(connect()) as conn:
         conn.execute(
-            "INSERT INTO jobs (job_id, user_id, topic, status, created_at, length_minutes) VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, user_id, topic, status, created_at, length_minutes),
+            "INSERT INTO jobs (job_id, user_id, topic, status, created_at, length_minutes, template) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (job_id, user_id, topic, status, created_at, length_minutes, template),
         )
         conn.commit()
 

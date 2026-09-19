@@ -455,6 +455,7 @@
         <h2>New Generation</h2>
         <form id="generate-form">
           <input type="text" id="topic" placeholder="e.g. the history of the printing press" maxlength="200" required />
+          <select id="template-select" title="Video style"></select>
           <select id="length-minutes">
             <option value="1">~1 min</option>
             <option value="2" selected>~2 min</option>
@@ -598,6 +599,7 @@
     authView.hidden = true;
     appView.hidden = false;
     topbarUsername.textContent = username;
+    loadTemplates();
     loadHistory();
   }
 
@@ -618,6 +620,7 @@
   const form = document.getElementById("generate-form");
   const topicInput = document.getElementById("topic");
   const lengthSelect = document.getElementById("length-minutes");
+  const templateSelect = document.getElementById("template-select");
   const submitBtn = document.getElementById("submit-btn");
 
   const currentEmpty = document.getElementById("current-empty");
@@ -689,6 +692,19 @@
     const mins = Math.floor(s / 60);
     const secs = s % 60;
     return `${mins}:${String(secs).padStart(2, "0")}`;
+  }
+
+  async function loadTemplates() {
+    try {
+      const res = await fetch("/templates");
+      if (!res.ok) return;
+      const data = await res.json();
+      templateSelect.innerHTML = data.templates.map((t) =>
+        `<option value="${t.id}" title="${escapeHtml(t.description)}"${t.id === data.default ? " selected" : ""}>${escapeHtml(t.label)}</option>`
+      ).join("");
+    } catch (err) {
+      /* the select keeps whatever it has; generation still defaults server-side */
+    }
   }
 
   function formatSize(bytes) {
@@ -1022,7 +1038,7 @@
 
     submitBtn.disabled = true;
     try {
-      const params = new URLSearchParams({ topic, length_minutes: lengthSelect.value });
+      const params = new URLSearchParams({ topic, length_minutes: lengthSelect.value, template: templateSelect.value });
       const res = await fetch(`/generate?${params}`, { method: "POST" });
       if (res.status === 401) { showAuth(); return; }
       if (!res.ok) {

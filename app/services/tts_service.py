@@ -48,10 +48,11 @@ _RETRY_TOLERANCE_SECONDS = 8
 class TTSService:
     """Unified TTS service supporting multiple backends"""
     
-    def __init__(self, engine=None, output_path=None, target_seconds=None):
+    def __init__(self, engine=None, output_path=None, target_seconds=None, voice=None):
         self.engine = engine or TTS_ENGINE
         self.audio_path = output_path or AUDIO_NAME
         self.target_seconds = target_seconds
+        self.voice = voice or POLLY_VOICE_ID
         self.validate_engine()
     
     def validate_engine(self):
@@ -182,7 +183,7 @@ class TTSService:
                     Text=_to_ssml(chunk, rate),
                     TextType="ssml",
                     OutputFormat="mp3",
-                    VoiceId=POLLY_VOICE_ID,
+                    VoiceId=self.voice,
                     Engine=POLLY_ENGINE,
                 )
                 part_path = f"{self.audio_path}.part{index}.mp3"
@@ -327,7 +328,7 @@ def _concat_audio(parts, output_path):
 
 
 # Backward compatibility function
-def generate_audio(text, engine=None, output_path=None, target_seconds=None):
+def generate_audio(text, engine=None, output_path=None, target_seconds=None, voice=None):
     """Legacy function for backward compatibility"""
-    service = TTSService(engine=engine, output_path=output_path, target_seconds=target_seconds)
+    service = TTSService(engine=engine, output_path=output_path, target_seconds=target_seconds, voice=voice)
     return service.generate(text)

@@ -27,6 +27,7 @@ from app.services.storage_service import (
     upload_video,
 )
 from app.services.topic_wise_video import topic_wise_video
+from app.services.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template, template_choices
 from app.services.tts_service import generate_audio
 from app.services.image_fetch_service import format_credit
 from app.services.video_fetch_service import fetch_beat_media
@@ -193,12 +194,13 @@ def _discard_source_media(beats):
                 pass
 
 
-def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
+def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: str = DEFAULT_TEMPLATE):
     beats = []
+    style = get_template(template)
     try:
         _set_step(job_id, "generating_script")
         script, beats = generate_script_and_keywords(
-            topic, length_minutes=length_minutes
+            topic, length_minutes=length_minutes, template=template
         )
         if not script:
             raise RuntimeError("Script generation returned empty text")
@@ -213,7 +215,10 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
             _set_step(job_id, "generating_audio")
             audio_path = os.path.join(AUDIO_DIR, f"{job_id}.wav")
             generate_audio(
-                script, output_path=audio_path, target_seconds=length_minutes * 60
+                script,
+                output_path=audio_path,
+                target_seconds=length_minutes * 60,
+                voice=style["voice"],
             )
 
             _set_step(job_id, "fetching_videos")
@@ -287,6 +292,11 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/templates")
+def get_templates():
+    return {"templates": template_choices(), "default": DEFAULT_TEMPLATE}
+
+
 @app.get("/")
 def index():
     return FileResponse(
@@ -300,9 +310,12 @@ def generate_video(
     background_tasks: BackgroundTasks,
     topic: str = Query(...),
     length_minutes: int = Query(2, ge=MIN_LENGTH_MINUTES, le=MAX_LENGTH_MINUTES),
+    template: str = Query(DEFAULT_TEMPLATE),
     current_user: dict = Depends(get_current_user),
 ):
     topic = _validate_topic(topic)
+    if template not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"unknown template: {template}")
 
     job_id = uuid.uuid4().hex
     create_job(
@@ -312,9 +325,10 @@ def generate_video(
         datetime.now(timezone.utc).isoformat(),
         user_id=current_user["id"],
         length_minutes=length_minutes,
+        template=template,
     )
 
-    background_tasks.add_task(run_video_pipeline, job_id, topic, length_minutes)
+    background_tasks.add_task(run_video_pipeline, job_id, topic, length_minutes, template)
 
     return {
         "job_id": job_id,

@@ -14,6 +14,7 @@ from app.config import (
     OPENROUTER_API_KEY,
     TTS_ENGINE,
 )
+from app.services.templates import get_template
 
 logger = logging.getLogger("ai_video_generator")
 
@@ -204,6 +205,23 @@ _NARRATION_LABEL = "NARRATION:"
 _ARCHIVAL_LABEL = "ARCHIVAL:"
 
 
+def _archival_instructions(style):
+    """Only the documentary style looks for photographs of real subjects, so
+    only it gets asked for them - a comic monologue has no real person to
+    photograph, and asking anyway just invites the model to invent one."""
+    if not style["use_archival"]:
+        return ""
+    return f"""
+Each beat also gets an {_ARCHIVAL_LABEL} line naming the real person, event, place or object that beat is about, if there is one - this is searched against a photo archive, so here proper nouns are exactly what's wanted ("Sachin Tendulkar", "Wankhede Stadium", "Gutenberg printing press"). Write "none" when the beat is about something general with no specific subject to photograph.
+- Like the search phrase, this is looked up with no other context, so it has to identify the subject on its own: "2011 Cricket World Cup final", not "2011 World Cup final", which returns the rugby one.
+- When the video follows one person or organisation, put that name in every {_ARCHIVAL_LABEL} line, even where the beat is about an event: "Sachin Tendulkar 1998 South Africa tour", because "1998 South Africa tour" on its own returns a US presidential visit.
+"""
+
+
+def _archival_format_line(style):
+    return f"{_ARCHIVAL_LABEL} <real subject, or none>\n" if style["use_archival"] else ""
+
+
 def _beat_count(length_minutes):
     """Enough beats that the footage keeps up with the narration, few enough
     that the model actually writes all of them.
@@ -216,7 +234,7 @@ def _beat_count(length_minutes):
     return max(4, min(9, length_minutes * 3))
 
 
-def generate_script_and_keywords(topic, length_minutes=2):
+def generate_script_and_keywords(topic, length_minutes=2, template=None):
     """Generate the narration already divided into beats, each carrying the
     search phrase for what should be on screen while it's spoken.
 
@@ -232,11 +250,12 @@ def generate_script_and_keywords(topic, length_minutes=2):
     people or events, so a phrase naming one returns something unrelated
     rather than nothing.
     """
+    style = get_template(template)
     target_words = _compensated_word_target(length_minutes)
     beats = _beat_count(length_minutes)
     per_beat_words = max(20, round(target_words / beats))
     prompt = f"""
-Write exactly {beats} beats of a YouTube documentary voiceover script about: {topic}
+Write exactly {beats} beats of a YouTube {style['label'].lower()} voiceover script about: {topic}
 
 Each beat is approximately {per_beat_words} words of narration ({target_words} words total). Write all {beats} beats and give each one its full {per_beat_words} words - do not stop early because the story feels finished. Read end to end the beats are one continuous script; a listener should not hear where one ends and the next begins.
 
@@ -245,28 +264,18 @@ Each beat also gets a stock-footage search phrase for what is ON SCREEN while it
 - It must match what THAT beat is talking about
 - Never a proper noun - stock libraries hold no footage of specific people or events, so describe the generic scene ("cricket stadium crowd", never "Sachin Tendulkar")
 - Each phrase is searched on its own with no other context, so name the subject in every one. For a cricket story write "cricket crowd cheering", not "crowd cheering" - the bare phrase returns football and rugby instead.
+{style['visuals'].strip()}
 
-Each beat also gets an ARCHIVAL line naming the real person, event, place or object that beat is about, if there is one - this is searched against a photo archive, so here proper nouns are exactly what's wanted ("Sachin Tendulkar", "Wankhede Stadium", "Gutenberg printing press"). Write "none" when the beat is about something general with no specific subject to photograph.
-- Like the search phrase, this is looked up with no other context, so it has to identify the subject on its own: "2011 Cricket World Cup final", not "2011 World Cup final", which returns the rugby one.
-- When the video follows one person or organisation, put that name in every ARCHIVAL line, even where the beat is about an event: "Sachin Tendulkar 1998 South Africa tour", because "1998 South Africa tour" on its own returns a US presidential visit.
-
-Narration content:
-- Open with the single most surprising, specific, or little-known fact - not scene-setting
-- Concrete detail throughout: real names, numbers, dates, places, events
-- One throughline, not disconnected inspirational statements
-- Include at least one fact most people wouldn't know
-- Vary sentence length; avoid clichés like "the human spirit", "against all odds", "a beacon of hope"
+{_archival_instructions(style)}{style['narration']}- Vary sentence length so it doesn't read as a monotonous run of short sentences
 - Narration text only: no scene descriptions, no speaker labels, no brackets, no "cut to"
 
 Reply in exactly this format, with no other text:
 {_BEAT_MARKER}
 {_PHRASE_LABEL} <search phrase>
-{_ARCHIVAL_LABEL} <real subject, or none>
-{_NARRATION_LABEL} <narration for this beat>
+{_archival_format_line(style)}{_NARRATION_LABEL} <narration for this beat>
 {_BEAT_MARKER}
 {_PHRASE_LABEL} <search phrase>
-{_ARCHIVAL_LABEL} <real subject, or none>
-{_NARRATION_LABEL} <narration for this beat>
+{_archival_format_line(style)}{_NARRATION_LABEL} <narration for this beat>
 """
     text = _complete(prompt, max_tokens=target_words * 3 + _REASONING_HEADROOM_TOKENS)
     return _parse_beats(text, topic)
