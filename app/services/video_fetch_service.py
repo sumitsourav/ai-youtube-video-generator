@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from app.config import IMAGE_DIR, PEXELS_API_KEY
+from app.services.image_fetch_service import fetch_archival_images
 from app.utils.file_utils import temp_filename
 
 SEARCH_URL = "https://api.pexels.com/videos/search"
@@ -35,6 +36,66 @@ def _search_one(query, per_query_limit):
 
     videos = response.json().get("videos", [])
     return [_smallest_file(video)["link"] for video in videos]
+
+
+def _cap_stills(images_by_index, beat_count):
+    """Keep at most half the beats on photographs.
+
+    Once the archival search falls back to the subject's name it finds a
+    portrait for almost any beat, which turned a video into six photographs
+    and no motion at all. Beats whose own occasion was found keep their
+    stills; the rest give theirs up and take footage, so the archival material
+    lands where it actually says something.
+    """
+    limit = max(1, beat_count // 2)
+    if len(images_by_index) <= limit:
+        return images_by_index
+
+    ranked = sorted(
+        images_by_index,
+        key=lambda i: not images_by_index[i][0].get("exact", False),
+    )
+    return {i: images_by_index[i] for i in ranked[:limit]}
+
+
+def fetch_beat_media(beats, per_beat=2):
+    """Fill each beat with what suits it: an archival photograph where the beat
+    is about a real, nameable subject, stock footage otherwise.
+
+    Beat-aligned stock search fixed footage that ignored the narration, but it
+    can't fix footage that doesn't exist - no stock library has clips of a
+    particular cricketer or a particular treaty signing, so those beats got
+    generic lookalikes. Commons does have photographs of the actual subject,
+    so the beat's own ARCHIVAL line decides which source to ask.
+
+    Mutates each beat, setting either "stills" (with credits) or "clips".
+    """
+    archival_indexes = [i for i, beat in enumerate(beats) if beat.get("archival")]
+
+    images_by_index = {}
+    if archival_indexes:
+        with ThreadPoolExecutor(max_workers=min(len(archival_indexes), 6)) as executor:
+            found = executor.map(
+                lambda i: fetch_archival_images(beats[i]["archival"], per_beat),
+                archival_indexes,
+            )
+            images_by_index = {i: images for i, images in zip(archival_indexes, found)}
+
+    images_by_index = _cap_stills(images_by_index, len(beats))
+
+    # A named subject Commons has never photographed falls back to stock rather
+    # than leaving the beat with nothing.
+    needs_footage = [i for i, _ in enumerate(beats) if not images_by_index.get(i)]
+    clips_by_index = {}
+    if needs_footage:
+        groups = fetch_beat_clips([beats[i]["phrase"] for i in needs_footage], per_beat)
+        clips_by_index = dict(zip(needs_footage, groups))
+
+    for index, beat in enumerate(beats):
+        beat["stills"] = images_by_index.get(index) or []
+        beat["clips"] = clips_by_index.get(index) or []
+
+    return beats
 
 
 def fetch_beat_clips(phrases, clips_per_beat=2):

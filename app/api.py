@@ -28,7 +28,8 @@ from app.services.storage_service import (
 )
 from app.services.topic_wise_video import topic_wise_video
 from app.services.tts_service import generate_audio
-from app.services.video_fetch_service import fetch_beat_clips
+from app.services.image_fetch_service import format_credit
+from app.services.video_fetch_service import fetch_beat_media
 from app.services.video_service import create_video
 from app.utils.file_utils import ensure_dirs
 
@@ -177,7 +178,23 @@ def _set_step(job_id: str, step: str):
     update_job(job_id, status=step, last_step=step)
 
 
+def _discard_source_media(beats):
+    """Delete the footage and photographs downloaded for a job once it's been
+    rendered into the video. Every job pulls down a dozen or so source files
+    and they used to accumulate forever - 934MB across 251 orphaned clips,
+    which is what eventually filled the disk and started failing builds."""
+    for beat in beats or []:
+        paths = list(beat.get("clips") or [])
+        paths += [image["path"] for image in beat.get("stills") or []]
+        for path in paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
+    beats = []
     try:
         _set_step(job_id, "generating_script")
         script, beats = generate_script_and_keywords(
@@ -191,9 +208,7 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
         # background while the (much slower) voiceover renders, keeping it off
         # the critical path.
         with ThreadPoolExecutor(max_workers=1) as fetch_executor:
-            fetch_future = fetch_executor.submit(
-                fetch_beat_clips, [beat["phrase"] for beat in beats]
-            )
+            fetch_future = fetch_executor.submit(fetch_beat_media, beats)
 
             _set_step(job_id, "generating_audio")
             audio_path = os.path.join(AUDIO_DIR, f"{job_id}.wav")
@@ -202,13 +217,18 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
             )
 
             _set_step(job_id, "fetching_videos")
-            clip_groups = fetch_future.result()
+            beats = fetch_future.result()
 
-        for beat, clips in zip(beats, clip_groups):
-            beat["clips"] = clips
-
-        if not any(beat["clips"] for beat in beats):
+        if not any(beat["clips"] or beat["stills"] for beat in beats):
             raise RuntimeError("No source videos found for this topic")
+
+        # Commons images are commercial-use but attribution-bearing, so the
+        # credits are stored with the job rather than left to be reconstructed.
+        credits = [
+            format_credit(image) for beat in beats for image in beat.get("stills") or []
+        ]
+        if credits:
+            update_job(job_id, image_credits="\n".join(dict.fromkeys(credits)))
 
         _set_step(job_id, "rendering_video")
         update_job(job_id, render_progress=0)
@@ -256,6 +276,10 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int):
             error=f"Failed during {step_label}: {exc}",
             finished_at=datetime.now(timezone.utc).isoformat(),
         )
+    finally:
+        # Also on failure: a job that died mid-render has no more use for its
+        # downloads either, and those were the ones piling up unnoticed.
+        _discard_source_media(beats)
 
 
 @app.get("/health")

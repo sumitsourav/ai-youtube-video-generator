@@ -17,6 +17,12 @@ FADE_SECONDS = 1
 MIN_SHOT_SECONDS = 4.0
 MAX_SHOTS = 40
 
+# Push-in applied to archival stills, per output frame. Slow on purpose: the
+# point is to keep a photograph from reading as a frozen frame, not to draw
+# attention to the move.
+KEN_BURNS_SPEED = 0.0006
+KEN_BURNS_MAX_ZOOM = 1.18
+
 # One grade over every clip. Stock footage is pulled from unrelated shoots -
 # a floodlit pitch next to desaturated archive next to a bright forest - and
 # without a shared curve the cuts read as a folder of downloads rather than
@@ -164,6 +170,30 @@ def _escape_filter_path(path: str) -> str:
     return path.replace("\\", "\\\\").replace(":", "\\:")
 
 
+def _ken_burns(duration):
+    """A slow push into a still photograph.
+
+    A still cut in beside moving footage reads as a glitch, so archival images
+    get motion of their own. zoompan works on its output frames, so it's fed a
+    frame count rather than seconds, and the source is scaled up first -
+    zooming a small image judders because zoompan steps the crop in whole
+    source pixels.
+    """
+    frames = max(1, int(round(duration * FPS)))
+    # 1.5x rather than 2x: enough source detail that the zoom steps stay
+    # sub-pixel, without making every still shot a 1440x2560 filter pass. The
+    # box has two cores and the render is already the slowest step.
+    width, height = int(WIDTH * 1.5), int(HEIGHT * 1.5)
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"zoompan=z='min(zoom+{KEN_BURNS_SPEED},{KEN_BURNS_MAX_ZOOM})':"
+        f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
+        f"{COLOR_GRADE},format=yuv420p,setsar=1"
+    )
+
+
 def _nearest_clips(beats, index):
     candidates = [i for i, beat in enumerate(beats) if beat.get("clips")]
     if not candidates:
@@ -191,7 +221,8 @@ def _plan_shots(beats, audio_duration):
         # A beat with no clips would leave a hole in the timeline, and -shortest
         # would then cut the video off at the hole rather than run to the end
         # of the narration. Borrow from the nearest beat that has something.
-        clips = beat.get("clips") or _nearest_clips(beats, index)
+        stills = [image["path"] for image in beat.get("stills") or []]
+        clips = stills or beat.get("clips") or _nearest_clips(beats, index)
         if not clips:
             elapsed = beat_end
             continue
@@ -203,7 +234,14 @@ def _plan_shots(beats, audio_duration):
             # Start further into the source each time a clip comes back round,
             # so a beat with one clip doesn't replay the same seconds.
             offset = (shot_index // len(clips)) * each
-            shots.append({"path": clip, "duration": each, "offset": offset})
+            shots.append(
+                {
+                    "path": clip,
+                    "duration": each,
+                    "offset": 0 if stills else offset,
+                    "is_still": bool(stills),
+                }
+            )
 
         elapsed = beat_end
 
@@ -213,7 +251,7 @@ def _plan_shots(beats, audio_duration):
 def create_video(beats, audio_file, script_text, output_path=None, progress_callback=None):
     output_path = output_path or VIDEO_NAME
 
-    if not beats or not any(beat.get("clips") for beat in beats):
+    if not beats or not any(beat.get("clips") or beat.get("stills") for beat in beats):
         raise Exception("No videos fetched")
 
     audio_duration = _probe_duration(audio_file)
@@ -230,6 +268,14 @@ def create_video(beats, audio_file, script_text, output_path=None, progress_call
 
         cmd = ["ffmpeg", "-y", "-loglevel", "error"]
         for shot in shots:
+            if shot["is_still"]:
+                # Deliberately no -loop/-t: zoompan emits its `d` frames for
+                # every frame it's given, so a looped input multiplies the
+                # segment by however many frames arrived - a 4-second shot came
+                # out 400 seconds long, and -shortest then truncated the video
+                # to that one still. One frame in, d frames out, exact.
+                cmd += ["-i", shot["path"]]
+                continue
             # -stream_loop -1 loops the input indefinitely; the -t before -i caps
             # how much of it is actually read. Together they handle both "source
             # shorter than needed" (loops to fill) and "source longer than
@@ -242,13 +288,16 @@ def create_video(beats, audio_file, script_text, output_path=None, progress_call
 
         filter_parts = []
         concat_inputs = ""
-        for i in range(shot_count):
+        for i, shot in enumerate(shots):
             # Hard cuts between shots: at a few seconds each, fading every one
             # in and out would spend most of the video dipped toward black.
-            filter_parts.append(
-                f"[{i}:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={WIDTH}:{HEIGHT},fps={FPS},{COLOR_GRADE},format=yuv420p,setsar=1[v{i}]"
-            )
+            if shot["is_still"]:
+                filter_parts.append(f"[{i}:v]{_ken_burns(shot['duration'])}[v{i}]")
+            else:
+                filter_parts.append(
+                    f"[{i}:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+                    f"crop={WIDTH}:{HEIGHT},fps={FPS},{COLOR_GRADE},format=yuv420p,setsar=1[v{i}]"
+                )
             concat_inputs += f"[v{i}]"
         filter_parts.append(f"{concat_inputs}concat=n={shot_count}:v=1:a=0[vconcat]")
         filter_parts.append(

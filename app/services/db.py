@@ -17,6 +17,7 @@ _JOBS_MIGRATION_COLUMNS = {
     "length_minutes": "INTEGER",
     "actual_duration_seconds": "REAL",
     "video_size_bytes": "INTEGER",
+    "image_credits": "TEXT",
 }
 
 _USERS_MIGRATION_COLUMNS = {

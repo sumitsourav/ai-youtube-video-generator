@@ -201,6 +201,7 @@ _REASONING_HEADROOM_TOKENS = 4000
 _BEAT_MARKER = "===BEAT==="
 _PHRASE_LABEL = "PHRASE:"
 _NARRATION_LABEL = "NARRATION:"
+_ARCHIVAL_LABEL = "ARCHIVAL:"
 
 
 def _beat_count(length_minutes):
@@ -245,6 +246,10 @@ Each beat also gets a stock-footage search phrase for what is ON SCREEN while it
 - Never a proper noun - stock libraries hold no footage of specific people or events, so describe the generic scene ("cricket stadium crowd", never "Sachin Tendulkar")
 - Each phrase is searched on its own with no other context, so name the subject in every one. For a cricket story write "cricket crowd cheering", not "crowd cheering" - the bare phrase returns football and rugby instead.
 
+Each beat also gets an ARCHIVAL line naming the real person, event, place or object that beat is about, if there is one - this is searched against a photo archive, so here proper nouns are exactly what's wanted ("Sachin Tendulkar", "Wankhede Stadium", "Gutenberg printing press"). Write "none" when the beat is about something general with no specific subject to photograph.
+- Like the search phrase, this is looked up with no other context, so it has to identify the subject on its own: "2011 Cricket World Cup final", not "2011 World Cup final", which returns the rugby one.
+- When the video follows one person or organisation, put that name in every ARCHIVAL line, even where the beat is about an event: "Sachin Tendulkar 1998 South Africa tour", because "1998 South Africa tour" on its own returns a US presidential visit.
+
 Narration content:
 - Open with the single most surprising, specific, or little-known fact - not scene-setting
 - Concrete detail throughout: real names, numbers, dates, places, events
@@ -256,9 +261,11 @@ Narration content:
 Reply in exactly this format, with no other text:
 {_BEAT_MARKER}
 {_PHRASE_LABEL} <search phrase>
+{_ARCHIVAL_LABEL} <real subject, or none>
 {_NARRATION_LABEL} <narration for this beat>
 {_BEAT_MARKER}
 {_PHRASE_LABEL} <search phrase>
+{_ARCHIVAL_LABEL} <real subject, or none>
 {_NARRATION_LABEL} <narration for this beat>
 """
     text = _complete(prompt, max_tokens=target_words * 3 + _REASONING_HEADROOM_TOKENS)
@@ -268,13 +275,16 @@ Reply in exactly this format, with no other text:
 def _parse_beats(text, topic):
     beats = []
     for block in text.split(_BEAT_MARKER)[1:]:
-        phrase = narration = ""
+        phrase = narration = archival = ""
         collecting = None
         for line in block.splitlines():
             stripped = _LIST_MARKER.sub("", line).strip()
             if stripped.upper().startswith(_PHRASE_LABEL):
                 phrase = stripped[len(_PHRASE_LABEL):].strip()
                 collecting = "phrase"
+            elif stripped.upper().startswith(_ARCHIVAL_LABEL):
+                archival = stripped[len(_ARCHIVAL_LABEL):].strip()
+                collecting = "archival"
             elif stripped.upper().startswith(_NARRATION_LABEL):
                 narration = stripped[len(_NARRATION_LABEL):].strip()
                 collecting = "narration"
@@ -283,7 +293,11 @@ def _parse_beats(text, topic):
                 narration = f"{narration} {stripped}".strip()
 
         if narration:
-            beats.append({"text": narration, "phrase": phrase or topic})
+            if archival.lower() in {"none", "n/a", "-", ""}:
+                archival = ""
+            beats.append(
+                {"text": narration, "phrase": phrase or topic, "archival": archival}
+            )
 
     if not beats:
         # Model ignored the format. Rather than spend another provider's quota
@@ -292,7 +306,7 @@ def _parse_beats(text, topic):
         fallback = text.split(_SCRIPT_MARKER, 1)[-1].split(_KEYWORDS_MARKER, 1)[0].strip()
         if not fallback:
             raise RuntimeError("Script generation returned no usable narration")
-        return fallback, [{"text": fallback, "phrase": topic}]
+        return fallback, [{"text": fallback, "phrase": topic, "archival": ""}]
 
     script = "\n\n".join(beat["text"] for beat in beats)
     return script, beats

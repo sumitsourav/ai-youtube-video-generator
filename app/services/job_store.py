@@ -15,6 +15,7 @@ _ALLOWED_UPDATE_FIELDS = {
     "render_progress",
     "actual_duration_seconds",
     "video_size_bytes",
+    "image_credits",
 }
 
 
