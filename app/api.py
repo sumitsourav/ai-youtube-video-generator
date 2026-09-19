@@ -28,6 +28,7 @@ from app.services.storage_service import (
 )
 from app.services.topic_wise_video import topic_wise_video
 from app.services.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template, template_choices
+from app.services.trends_service import DEFAULT_GEO, trending_topics
 from app.services.tts_service import generate_audio
 from app.services.image_fetch_service import format_credit
 from app.services.video_fetch_service import fetch_beat_media
@@ -295,6 +296,11 @@ def health():
 @app.get("/templates")
 def get_templates():
     return {"templates": template_choices(), "default": DEFAULT_TEMPLATE}
+
+
+@app.get("/trending")
+def get_trending(geo: str = Query(DEFAULT_GEO, min_length=2, max_length=2)):
+    return {"topics": trending_topics(geo.upper()), "geo": geo.upper()}
 
 
 @app.get("/")
