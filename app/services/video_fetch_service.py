@@ -1,5 +1,6 @@
 # app/services/video_fetch_service.py
 
+import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,11 @@ SEARCH_URL = "https://api.pexels.com/videos/search"
 # How many candidates to rank before picking. Costs one request either way -
 # per_page is free - so this is only about having something to choose from.
 _CANDIDATE_POOL = 15
+
+# Kept on the same scale as the rarity weights: enough to break a tie in the
+# subject's favour, not enough to outvote a candidate that matches the rest of
+# the phrase.
+_SUBJECT_BONUS = 1.0
 
 _TRAILING_ID = re.compile(r"-\d+$")
 
@@ -48,20 +54,41 @@ def _describes(video):
     return _TRAILING_ID.sub("", slug).replace("-", " ").lower()
 
 
-def _relevance(video, words):
-    """Score a candidate against the search phrase.
+def _word_weights(words, described):
+    """Weight each phrase word by how rare it is among the candidates.
 
-    The leading word counts double because the prompt puts the subject there:
-    for "cricket trophy celebration" the whole point is the cricket, and a
-    clip of a generic trophy matches two words while showing the wrong sport
-    entirely. That case is real - every one of Pexels' top ten for that phrase
-    was a generic trophy, one of them for football.
+    Counting matches equally lets a generic word decide the pick: "parchment
+    scrolls stack" chose a clip of banked currency, because it matched
+    "stack". Rarity within this one result set is the signal - when a search
+    for "cricket trophy celebration" comes back as a wall of generic
+    trophies, "trophy" is in nearly every candidate and tells us nothing,
+    while "cricket" is in almost none and is the entire question. That is
+    inverse document frequency, and the pool needed to compute it is already
+    in hand.
+    """
+    total = len(described) or 1
+    weights = {}
+    for word in words:
+        appearances = sum(1 for text in described if word in text)
+        # A word in every candidate is worth nothing, never less than nothing.
+        weights[word] = max(0.0, math.log(total / (1 + appearances)))
+    return weights
+
+
+def _relevance(video, words, weights):
+    """Score one candidate against the phrase.
+
+    The leading word keeps a flat bonus on top of its rarity weight. The
+    prompt puts the subject there, and when a pool happens to be full of
+    on-subject clips its rarity weight correctly drops to nothing - at which
+    point the bonus is all that keeps the subject ahead of an incidental
+    match.
     """
     described = _describes(video)
     if not words:
-        return 0
-    score = sum(1 for word in words if word in described)
-    return score + (1 if words[0] in described else 0)
+        return 0.0
+    score = sum(weights.get(word, 0.0) for word in words if word in described)
+    return score + (_SUBJECT_BONUS if words[0] in described else 0.0)
 
 
 def _phrase_words(query):
@@ -88,7 +115,8 @@ def _search_one(query, per_query_limit):
 
     videos = response.json().get("videos", [])
     words = _phrase_words(query)
-    ranked = sorted(videos, key=lambda v: _relevance(v, words), reverse=True)
+    weights = _word_weights(words, [_describes(video) for video in videos])
+    ranked = sorted(videos, key=lambda v: _relevance(v, words, weights), reverse=True)
     return [_smallest_file(video)["link"] for video in ranked[:per_query_limit]]
 
 
