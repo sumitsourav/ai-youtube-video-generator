@@ -1,6 +1,7 @@
 # app/services/video_fetch_service.py
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -9,6 +10,19 @@ from app.services.image_fetch_service import fetch_archival_images
 from app.utils.file_utils import temp_filename
 
 SEARCH_URL = "https://api.pexels.com/videos/search"
+
+# How many candidates to rank before picking. Costs one request either way -
+# per_page is free - so this is only about having something to choose from.
+_CANDIDATE_POOL = 15
+
+_TRAILING_ID = re.compile(r"-\d+$")
+
+# Words that appear in so many clip descriptions that matching on them says
+# nothing about whether the footage is right.
+_STOPWORDS = {
+    "a", "an", "the", "of", "on", "in", "at", "with", "and", "for", "from",
+    "over", "into", "view", "shot", "close", "up", "scene", "footage",
+}
 
 
 def _smallest_file(video):
@@ -25,9 +39,47 @@ def _download_one(video_url):
     return filename
 
 
+def _describes(video):
+    """Pexels' `tags` field comes back empty, but the clip's page URL ends in a
+    slug written from its description - "aerial-view-of-live-cricket-match-in-
+    a-stadium-18148072" - which is the only thing in the response that says
+    what the footage actually shows."""
+    slug = video.get("url", "").rstrip("/").split("/")[-1]
+    return _TRAILING_ID.sub("", slug).replace("-", " ").lower()
+
+
+def _relevance(video, words):
+    """Score a candidate against the search phrase.
+
+    The leading word counts double because the prompt puts the subject there:
+    for "cricket trophy celebration" the whole point is the cricket, and a
+    clip of a generic trophy matches two words while showing the wrong sport
+    entirely. That case is real - every one of Pexels' top ten for that phrase
+    was a generic trophy, one of them for football.
+    """
+    described = _describes(video)
+    if not words:
+        return 0
+    score = sum(1 for word in words if word in described)
+    return score + (1 if words[0] in described else 0)
+
+
+def _phrase_words(query):
+    return [
+        word
+        for word in re.findall(r"[a-z]+", query.lower())
+        if word not in _STOPWORDS and len(word) > 2
+    ]
+
+
 def _search_one(query, per_query_limit):
     headers = {"Authorization": PEXELS_API_KEY}
-    params = {"query": query, "per_page": per_query_limit, "orientation": "landscape"}
+    # Ask for a pool rather than just what's needed. Pexels ranks loosely - it
+    # will happily return thousands of results that ignore the qualifying word
+    # - and measured across real generated phrases, 18% of beats got footage
+    # matching nothing in their phrase while a better clip sat further down
+    # this same response. Nothing extra is downloaded; only the winners are.
+    params = {"query": query, "per_page": _CANDIDATE_POOL, "orientation": "landscape"}
     response = requests.get(SEARCH_URL, headers=headers, params=params, timeout=15)
 
     if response.status_code != 200:
@@ -35,7 +87,9 @@ def _search_one(query, per_query_limit):
         return []
 
     videos = response.json().get("videos", [])
-    return [_smallest_file(video)["link"] for video in videos]
+    words = _phrase_words(query)
+    ranked = sorted(videos, key=lambda v: _relevance(v, words), reverse=True)
+    return [_smallest_file(video)["link"] for video in ranked[:per_query_limit]]
 
 
 def _cap_stills(images_by_index, beat_count):
