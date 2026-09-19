@@ -20,6 +20,7 @@ TEMPLATES = {
         "label": "Documentary",
         "description": "Factual, cinematic narration built on real detail",
         "voice": "Gregory",
+        "music_mood": "cinematic",
         "use_archival": True,
         "narration": """
 Write it as documentary narration.
@@ -37,6 +38,7 @@ Write it as documentary narration.
         "label": "Comedy",
         "description": "Wry, observational narration with punchlines",
         "voice": "Danielle",
+        "music_mood": "quirky",
         "use_archival": False,
         "narration": """
 Write it as a comic monologue - one narrator being funny about the subject, not a sketch with characters.
@@ -54,6 +56,7 @@ Write it as a comic monologue - one narrator being funny about the subject, not 
         "label": "Short film",
         "description": "A narrated story with a character and an arc",
         "voice": "Ruth",
+        "music_mood": "ambient",
         "use_archival": False,
         "narration": """
 Write it as a narrated short story with a beginning, a turn and an ending.
@@ -77,6 +80,7 @@ Write it as a narrated short story with a beginning, a turn and an ending.
         "label": "Kids' story",
         "description": "Playful, wide-eyed narration over bright, simple visuals",
         "voice": "Patrick",
+        "music_mood": "happy",
         "use_archival": False,
         "narration": """
 Write it as a playful story told to a curious child.

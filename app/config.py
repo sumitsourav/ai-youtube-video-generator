@@ -37,6 +37,12 @@ VIDEO_DIR = f"{OUTPUT_DIR}/videos"
 VIDEO_NAME = f"{VIDEO_DIR}/output2.mp4"
 AUDIO_NAME = f"{AUDIO_DIR}/voice.wav"
 
+# Jamendo (optional). Background music bed under narration. Needs a free
+# developer account at devportal.jamendo.com - register an app there and
+# paste its client_id here. Left unset, videos render with narration only;
+# nothing else in the pipeline depends on it.
+JAMENDO_CLIENT_ID = os.getenv("JAMENDO_CLIENT_ID")
+
 # TTS Configuration
 # Options: "polly" (AWS neural, most realistic), "gtts" (free, google),
 # "pyttsx3" (free, offline), "elevenlabs" (premium, tiny free quota)

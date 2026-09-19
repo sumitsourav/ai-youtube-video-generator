@@ -33,6 +33,11 @@ COLOR_GRADE = (
     "colorbalance=rs=-0.02:bs=0.04:rh=0.03:bh=-0.02"
 )
 
+# A bed under narration, not competing with it. -20dB before the mix's own
+# amplitude halving puts the music well beneath the voice without vanishing
+# in quiet passages.
+MUSIC_VOLUME_DB = -20
+
 # CRF 30 + slow preset cuts output size by ~66% vs libx264's untuned defaults
 # (CRF 23, medium preset), measured on a 20s 720x1280 test clip (2.58MB vs
 # 7.53MB). Quality cost is small but real: SSIM 0.963 vs a near-lossless
@@ -291,7 +296,8 @@ def _plan_shots(beats, audio_duration):
 
 
 def create_video(
-    beats, audio_file, script_text, output_path=None, progress_callback=None, word_timings=None
+    beats, audio_file, script_text, output_path=None, progress_callback=None,
+    word_timings=None, music_path=None,
 ):
     output_path = output_path or VIDEO_NAME
 
@@ -331,6 +337,13 @@ def create_video(
                 cmd += ["-ss", f"{shot['offset']:.3f}"]
             cmd += ["-t", f"{shot['duration']:.3f}", "-i", shot["path"]]
         cmd += ["-i", audio_file]
+        narration_idx = shot_count
+        music_idx = None
+        if music_path:
+            music_idx = shot_count + 1
+            # Loop like the footage does: a track shorter than the video
+            # would otherwise just end partway through it.
+            cmd += ["-stream_loop", "-1", "-t", f"{audio_duration:.3f}", "-i", music_path]
 
         filter_parts = []
         concat_inputs = ""
@@ -355,10 +368,33 @@ def create_video(
             f"original_size={WIDTH}x{HEIGHT}:force_style='{CAPTION_STYLE}'[vout]"
         )
 
+        if music_idx is not None:
+            # A flat volume cut, not dynamic ducking - simpler and reliable,
+            # at a level low enough that narration stays intelligible under
+            # it. amix halves each input's amplitude by default (duration=
+            # first keeps the output at the narration's length rather than
+            # the looped music's), so the cut is compensated back out after.
+            filter_parts.append(
+                f"[{music_idx}:a]volume={MUSIC_VOLUME_DB}dB,"
+                f"afade=t=out:st={fade_out_start:.3f}:d={FADE_SECONDS}[music]"
+            )
+            filter_parts.append(
+                f"[{narration_idx}:a][music]amix=inputs=2:duration=first,"
+                f"volume=2[amixed]"
+            )
+        else:
+            filter_parts.append(f"[{narration_idx}:a]anull[amixed]")
+
+        # YouTube (and most platforms) target -14 LUFS integrated loudness and
+        # turn down anything louder - a video mixed hotter than that gets
+        # quietly renormalized on playback anyway, so there's no upside to
+        # skipping this. TP -1.5 keeps peaks clear of clipping after that.
+        filter_parts.append(f"[amixed]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
+
         cmd += [
             "-filter_complex", ";".join(filter_parts),
             "-map", "[vout]",
-            "-map", f"{shot_count}:a",
+            "-map", "[aout]",
             "-c:v", "libx264",
             "-crf", VIDEO_CRF,
             "-preset", VIDEO_PRESET,

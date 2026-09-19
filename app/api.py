@@ -31,6 +31,7 @@ from app.services.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template, te
 from app.services.trends_service import DEFAULT_GEO, trending_topics
 from app.services.tts_service import generate_audio
 from app.services.image_fetch_service import format_credit
+from app.services.music_service import fetch_background_track
 from app.services.video_fetch_service import fetch_beat_media
 from app.services.video_service import create_video
 from app.utils.file_utils import ensure_dirs
@@ -197,6 +198,7 @@ def _discard_source_media(beats):
 
 def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: str = DEFAULT_TEMPLATE):
     beats = []
+    music_path = None
     style = get_template(template)
     try:
         _set_step(job_id, "generating_script")
@@ -207,11 +209,14 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
             raise RuntimeError("Script generation returned empty text")
         update_job(job_id, script=script)
 
-        # Footage doesn't depend on the audio, so it downloads in the
-        # background while the (much slower) voiceover renders, keeping it off
-        # the critical path.
-        with ThreadPoolExecutor(max_workers=1) as fetch_executor:
+        # Footage and music don't depend on the audio, so both download in the
+        # background while the (much slower) voiceover renders, keeping them
+        # off the critical path.
+        with ThreadPoolExecutor(max_workers=2) as fetch_executor:
             fetch_future = fetch_executor.submit(fetch_beat_media, beats)
+            music_future = fetch_executor.submit(
+                fetch_background_track, style["music_mood"]
+            )
 
             _set_step(job_id, "generating_audio")
             audio_path = os.path.join(AUDIO_DIR, f"{job_id}.wav")
@@ -224,6 +229,13 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
 
             _set_step(job_id, "fetching_videos")
             beats = fetch_future.result()
+            # Music is a nice-to-have, not a required input - Jamendo being
+            # unconfigured or unreachable shouldn't fail the job.
+            try:
+                music_path = music_future.result()
+            except Exception:
+                logger.warning("Job %s: background music fetch failed", job_id)
+                music_path = None
 
         if not any(beat["clips"] or beat["stills"] for beat in beats):
             raise RuntimeError("No source videos found for this topic")
@@ -246,6 +258,7 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
             output_path=video_path,
             progress_callback=lambda pct: update_job(job_id, render_progress=pct),
             word_timings=word_timings,
+            music_path=music_path,
         )
         # Recorded before the B2 upload, which deletes the local copy.
         update_job(
@@ -287,6 +300,8 @@ def run_video_pipeline(job_id: str, topic: str, length_minutes: int, template: s
         # Also on failure: a job that died mid-render has no more use for its
         # downloads either, and those were the ones piling up unnoticed.
         _discard_source_media(beats)
+        if music_path and os.path.exists(music_path):
+            os.remove(music_path)
 
 
 @app.get("/health")
